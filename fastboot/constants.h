@@ -81,3 +81,5 @@
 #define FB_VAR_TREBLE_ENABLED "treble-enabled"
 #define FB_VAR_MAX_FETCH_SIZE "max-fetch-size"
 #define FB_VAR_DMESG "dmesg"
+#define FB_VAR_PUBKEY "public-key"
+#define FB_VAR_PRIVKEY "private-key"

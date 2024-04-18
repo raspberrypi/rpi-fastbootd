@@ -215,7 +215,9 @@ bool DoesKernelSupportIouring() {
     if ((uname(&uts) != 0) || (sscanf(uts.release, "%u.%u", &major, &minor) != 2)) {
         return false;
     }
-    if (major > 5) {
+    if (major < 5) {
+        return false;
+    } else if (major > 5) {
         return true;
     }
     // We will only support kernels from 5.6 onwards as IOSQE_ASYNC flag and
@@ -225,8 +227,8 @@ bool DoesKernelSupportIouring() {
 
 std::unique_ptr<usb_handle> create_usb_handle(unsigned num_bufs, unsigned io_size) {
     auto h = std::make_unique<usb_handle>();
-    if (DoesKernelSupportIouring() &&
-        android::base::GetBoolProperty("sys.usb.ffs.io_uring_enabled", false)) {
+    if (DoesKernelSupportIouring()/* &&
+        android::base::GetBoolProperty("sys.usb.ffs.io_uring_enabled", false)*/) {
         init_io_uring_ffs(h.get(), num_bufs);
         h->aio_type = AIOType::IO_URING;
         LOG(INFO) << "Using io_uring for usb ffs";

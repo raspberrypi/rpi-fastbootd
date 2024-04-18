@@ -1,0 +1,8 @@
+#!/bin/sh
+
+set -e
+
+UDC="$(ls /sys/class/udc)"
+>&2 echo "Found UDC ${UDC}"
+echo "${UDC}" > UDC
+>&2 echo "Attached UDC ${UDC}"

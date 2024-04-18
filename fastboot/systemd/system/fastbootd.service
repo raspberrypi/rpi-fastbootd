@@ -1,0 +1,17 @@
+[Unit]
+Description=Fastbootd
+Requires=dev-usb\x2dffs-fastboot.mount
+Requires=data.mount
+Requires=fastboot-udc-attach.service
+After=dev-usb\x2dffs-fastboot.mount
+Before=fastboot-udc-attach.service
+
+[Service]
+Type=notify
+NotifyAccess=all
+ExecStartPre=/usr/local/bin/generate_fastboot_cfg
+ExecStart=/usr/local/bin/run_fastboot
+Restart=no
+
+[Install]
+WantedBy=multi-user.target

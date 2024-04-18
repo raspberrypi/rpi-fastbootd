@@ -21,8 +21,8 @@
 #include <android-base/file.h>
 #include <android-base/logging.h>
 #include <android-base/unique_fd.h>
-#include <fstab/fstab.h>
-#include <liblp/liblp.h>
+// #include <fstab/fstab.h>
+// #include <liblp/liblp.h>
 
 // Logical partitions are only mapped to a block device as needed, and
 // immediately unmapped when no longer needed. In order to enforce this we
@@ -100,7 +100,6 @@ class AutoMountMetadata {
     explicit operator bool() const { return mounted_; }
 
   private:
-    android::fs_mgr::Fstab fstab_;
     bool mounted_ = false;
     bool should_unmount_ = false;
 };
@@ -127,6 +126,12 @@ bool GetSlotNumber(const std::string& slot, int32_t* number);
 std::vector<std::string> ListPartitions(FastbootDevice* device);
 bool GetDeviceLockStatus();
 
-// Update all copies of metadata.
-bool UpdateAllPartitionMetadata(FastbootDevice* device, const std::string& super_name,
-                                const android::fs_mgr::LpMetadata& metadata);
+// // Update all copies of metadata.
+// bool UpdateAllPartitionMetadata(FastbootDevice* device, const std::string& super_name,
+//                                 const android::fs_mgr::LpMetadata& metadata);
+
+namespace android {
+    uint64_t get_block_device_size(int fd);
+
+    int wipe_block_device(int fd);
+} // namespace android

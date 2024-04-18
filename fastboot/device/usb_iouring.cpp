@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+#include <cstring>
 #include <android-base/logging.h>
 #include <liburing.h>
 #include "liburing/io_uring.h"

@@ -88,6 +88,11 @@ bool GetMaxFetchSize(FastbootDevice* /* device */, const std::vector<std::string
 // Complex cases.
 bool GetDmesg(FastbootDevice* device);
 
+bool GetPubkey(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
+                     std::string* message);
+bool GetPrivkey(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
+                     std::string* message);
+
 // Helpers for getvar all.
 std::vector<std::vector<std::string>> GetAllPartitionArgsWithSlot(FastbootDevice* device);
 std::vector<std::vector<std::string>> GetAllPartitionArgsNoSlot(FastbootDevice* device);

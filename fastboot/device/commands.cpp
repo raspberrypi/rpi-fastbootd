@@ -19,6 +19,7 @@
 #include <inttypes.h>
 #include <sys/socket.h>
 #include <sys/un.h>
+#include <sys/wait.h> // for waitpid
 
 #include <unordered_set>
 
@@ -28,25 +29,33 @@
 #include <android-base/stringprintf.h>
 #include <android-base/strings.h>
 #include <android-base/unique_fd.h>
-#include <android/hardware/boot/1.1/IBootControl.h>
-#include <cutils/android_reboot.h>
-#include <ext4_utils/wipe.h>
-#include <fs_mgr.h>
-#include <fs_mgr/roots.h>
-#include <libgsi/libgsi.h>
-#include <liblp/builder.h>
-#include <liblp/liblp.h>
-#include <libsnapshot/snapshot.h>
-#include <storage_literals/storage_literals.h>
+// #include <android/hardware/boot/1.1/IBootControl.h>
+// #include <cutils/android_reboot.h>
+// #include <ext4_utils/wipe.h>
+// #include <fs_mgr.h>
+// #include <fs_mgr/roots.h>
+// #include <libgsi/libgsi.h>
+// #include <liblp/builder.h>
+// #include <liblp/liblp.h>
+// #include <libsnapshot/snapshot.h>
+//#include <storage_literals/storage_literals.h>
 #include <uuid/uuid.h>
+#include <libfdisk/libfdisk.h>
 
-#include <bootloader_message/bootloader_message.h>
+#include <spawn.h> // for posix_spawnp
 
-#include "BootControlClient.h"
+// #include <bootloader_message/bootloader_message.h>
+
+// #include "BootControlClient.h"
 #include "constants.h"
 #include "fastboot_device.h"
 #include "flashing.h"
 #include "utility.h"
+#include "storage_literals.h"
+
+#include <iostream>
+#include <fstream>
+#include <cerrno>
 
 #ifdef FB_ENABLE_FETCH
 static constexpr bool kEnableFetch = true;
@@ -54,11 +63,13 @@ static constexpr bool kEnableFetch = true;
 static constexpr bool kEnableFetch = false;
 #endif
 
-using android::fs_mgr::MetadataBuilder;
-using android::hal::CommandResult;
-using ::android::hardware::hidl_string;
-using android::snapshot::SnapshotManager;
-using MergeStatus = android::hal::BootControlClient::MergeStatus;
+#define KEYFILE "--key-file=/data/fastboot.key"
+
+// using android::fs_mgr::MetadataBuilder;
+// using android::hal::CommandResult;
+// using ::android::hardware::hidl_string;
+// using android::snapshot::SnapshotManager;
+// using MergeStatus = android::hal::BootControlClient::MergeStatus;
 
 using namespace android::storage_literals;
 
@@ -70,12 +81,12 @@ struct VariableHandlers {
 };
 
 static bool IsSnapshotUpdateInProgress(FastbootDevice* device) {
-    auto hal = device->boot1_1();
-    if (!hal) {
+    // auto hal = device->boot1_1();
+    // if (!hal) {
         return false;
-    }
-    auto merge_status = hal->getSnapshotMergeStatus();
-    return merge_status == MergeStatus::SNAPSHOTTED || merge_status == MergeStatus::MERGING;
+    // }
+    // auto merge_status = hal->getSnapshotMergeStatus();
+    // return merge_status == MergeStatus::SNAPSHOTTED || merge_status == MergeStatus::MERGING;
 }
 
 static bool IsProtectedPartitionDuringMerge(FastbootDevice* device, const std::string& name) {
@@ -113,39 +124,41 @@ static void GetAllVars(FastbootDevice* device, const std::string& name,
 const std::unordered_map<std::string, VariableHandlers> kVariableMap = {
         {FB_VAR_VERSION, {GetVersion, nullptr}},
         {FB_VAR_VERSION_BOOTLOADER, {GetBootloaderVersion, nullptr}},
-        {FB_VAR_VERSION_BASEBAND, {GetBasebandVersion, nullptr}},
-        {FB_VAR_VERSION_OS, {GetOsVersion, nullptr}},
-        {FB_VAR_VERSION_VNDK, {GetVndkVersion, nullptr}},
+        // {FB_VAR_VERSION_BASEBAND, {GetBasebandVersion, nullptr}},
+        // {FB_VAR_VERSION_OS, {GetOsVersion, nullptr}},
+        // {FB_VAR_VERSION_VNDK, {GetVndkVersion, nullptr}},
         {FB_VAR_PRODUCT, {GetProduct, nullptr}},
         {FB_VAR_SERIALNO, {GetSerial, nullptr}},
-        {FB_VAR_VARIANT, {GetVariant, nullptr}},
+        // {FB_VAR_VARIANT, {GetVariant, nullptr}},
         {FB_VAR_SECURE, {GetSecure, nullptr}},
-        {FB_VAR_UNLOCKED, {GetUnlocked, nullptr}},
+        // {FB_VAR_UNLOCKED, {GetUnlocked, nullptr}},
         {FB_VAR_MAX_DOWNLOAD_SIZE, {GetMaxDownloadSize, nullptr}},
-        {FB_VAR_CURRENT_SLOT, {::GetCurrentSlot, nullptr}},
-        {FB_VAR_SLOT_COUNT, {GetSlotCount, nullptr}},
-        {FB_VAR_HAS_SLOT, {GetHasSlot, GetAllPartitionArgsNoSlot}},
-        {FB_VAR_SLOT_SUCCESSFUL, {GetSlotSuccessful, nullptr}},
-        {FB_VAR_SLOT_UNBOOTABLE, {GetSlotUnbootable, nullptr}},
+        // {FB_VAR_CURRENT_SLOT, {::GetCurrentSlot, nullptr}},
+        // {FB_VAR_SLOT_COUNT, {GetSlotCount, nullptr}},
+        // {FB_VAR_HAS_SLOT, {GetHasSlot, GetAllPartitionArgsNoSlot}},
+        // {FB_VAR_SLOT_SUCCESSFUL, {GetSlotSuccessful, nullptr}},
+        // {FB_VAR_SLOT_UNBOOTABLE, {GetSlotUnbootable, nullptr}},
         {FB_VAR_PARTITION_SIZE, {GetPartitionSize, GetAllPartitionArgsWithSlot}},
         {FB_VAR_PARTITION_TYPE, {GetPartitionType, GetAllPartitionArgsWithSlot}},
         {FB_VAR_IS_LOGICAL, {GetPartitionIsLogical, GetAllPartitionArgsWithSlot}},
         {FB_VAR_IS_USERSPACE, {GetIsUserspace, nullptr}},
-        {FB_VAR_IS_FORCE_DEBUGGABLE, {GetIsForceDebuggable, nullptr}},
-        {FB_VAR_OFF_MODE_CHARGE_STATE, {GetOffModeChargeState, nullptr}},
-        {FB_VAR_BATTERY_VOLTAGE, {GetBatteryVoltage, nullptr}},
-        {FB_VAR_BATTERY_SOC_OK, {GetBatterySoCOk, nullptr}},
-        {FB_VAR_HW_REVISION, {GetHardwareRevision, nullptr}},
-        {FB_VAR_SUPER_PARTITION_NAME, {GetSuperPartitionName, nullptr}},
-        {FB_VAR_SNAPSHOT_UPDATE_STATUS, {GetSnapshotUpdateStatus, nullptr}},
+        // {FB_VAR_IS_FORCE_DEBUGGABLE, {GetIsForceDebuggable, nullptr}},
+        // {FB_VAR_OFF_MODE_CHARGE_STATE, {GetOffModeChargeState, nullptr}},
+        // {FB_VAR_BATTERY_VOLTAGE, {GetBatteryVoltage, nullptr}},
+        // {FB_VAR_BATTERY_SOC_OK, {GetBatterySoCOk, nullptr}},
+        // {FB_VAR_HW_REVISION, {GetHardwareRevision, nullptr}},
+        // {FB_VAR_SUPER_PARTITION_NAME, {GetSuperPartitionName, nullptr}},
+        // {FB_VAR_SNAPSHOT_UPDATE_STATUS, {GetSnapshotUpdateStatus, nullptr}},
         {FB_VAR_CPU_ABI, {GetCpuAbi, nullptr}},
-        {FB_VAR_SYSTEM_FINGERPRINT, {GetSystemFingerprint, nullptr}},
-        {FB_VAR_VENDOR_FINGERPRINT, {GetVendorFingerprint, nullptr}},
-        {FB_VAR_DYNAMIC_PARTITION, {GetDynamicPartition, nullptr}},
-        {FB_VAR_FIRST_API_LEVEL, {GetFirstApiLevel, nullptr}},
-        {FB_VAR_SECURITY_PATCH_LEVEL, {GetSecurityPatchLevel, nullptr}},
-        {FB_VAR_TREBLE_ENABLED, {GetTrebleEnabled, nullptr}},
+        // {FB_VAR_SYSTEM_FINGERPRINT, {GetSystemFingerprint, nullptr}},
+        // {FB_VAR_VENDOR_FINGERPRINT, {GetVendorFingerprint, nullptr}},
+        // {FB_VAR_DYNAMIC_PARTITION, {GetDynamicPartition, nullptr}},
+        // {FB_VAR_FIRST_API_LEVEL, {GetFirstApiLevel, nullptr}},
+        // {FB_VAR_SECURITY_PATCH_LEVEL, {GetSecurityPatchLevel, nullptr}},
+        // {FB_VAR_TREBLE_ENABLED, {GetTrebleEnabled, nullptr}},
         {FB_VAR_MAX_FETCH_SIZE, {GetMaxFetchSize, nullptr}},
+        {FB_VAR_PUBKEY, {GetPubkey, nullptr}},
+        {FB_VAR_PRIVKEY, {GetPrivkey, nullptr}},
 };
 
 static bool GetVarAll(FastbootDevice* device) {
@@ -158,9 +171,9 @@ static bool GetVarAll(FastbootDevice* device) {
 static void PostWipeData() {
     std::string err;
     // Reset mte state of device.
-    if (!WriteMiscMemtagMessage({}, &err)) {
-        LOG(ERROR) << "Failed to reset MTE state: " << err;
-    }
+    // if (!WriteMiscMemtagMessage({}, &err)) {
+    //     LOG(ERROR) << "Failed to reset MTE state: " << err;
+    // }
 }
 
 const std::unordered_map<std::string, std::function<bool(FastbootDevice*)>> kSpecialVars = {
@@ -197,26 +210,26 @@ bool GetVarHandler(FastbootDevice* device, const std::vector<std::string>& args)
 }
 
 bool OemPostWipeData(FastbootDevice* device) {
-    auto fastboot_hal = device->fastboot_hal();
-    if (!fastboot_hal) {
+    // auto fastboot_hal = device->fastboot_hal();
+    // if (!fastboot_hal) {
         return false;
-    }
+    // }
 
-    auto status = fastboot_hal->doOemSpecificErase();
-    if (status.isOk()) {
-        device->WriteStatus(FastbootResult::OKAY, "Erasing succeeded");
-        return true;
-    }
-    switch (status.getExceptionCode()) {
-        case EX_UNSUPPORTED_OPERATION:
-            return false;
-        case EX_SERVICE_SPECIFIC:
-            device->WriteStatus(FastbootResult::FAIL, status.getDescription());
-            return false;
-        default:
-            LOG(ERROR) << "Erase operation failed" << status.getDescription();
-            return false;
-    }
+    // auto status = fastboot_hal->doOemSpecificErase();
+    // if (status.isOk()) {
+    //     device->WriteStatus(FastbootResult::OKAY, "Erasing succeeded");
+    //     return true;
+    // }
+    // switch (status.getExceptionCode()) {
+    //     case EX_UNSUPPORTED_OPERATION:
+    //         return false;
+    //     case EX_SERVICE_SPECIFIC:
+    //         device->WriteStatus(FastbootResult::FAIL, status.getDescription());
+    //         return false;
+    //     default:
+    //         LOG(ERROR) << "Erase operation failed" << status.getDescription();
+    //         return false;
+    // }
 }
 
 bool EraseHandler(FastbootDevice* device, const std::vector<std::string>& args) {
@@ -228,7 +241,8 @@ bool EraseHandler(FastbootDevice* device, const std::vector<std::string>& args) 
         return device->WriteStatus(FastbootResult::FAIL, "Erase is not allowed on locked devices");
     }
 
-    const auto& partition_name = args[1];
+    auto partition_name = args[1];
+    partition_name.insert(0, "/dev/");
     if (IsProtectedPartitionDuringMerge(device, partition_name)) {
         auto message = "Cannot erase " + partition_name + " while a snapshot update is in progress";
         return device->WriteFail(message);
@@ -238,44 +252,504 @@ bool EraseHandler(FastbootDevice* device, const std::vector<std::string>& args) 
     if (!OpenPartition(device, partition_name, &handle)) {
         return device->WriteStatus(FastbootResult::FAIL, "Partition doesn't exist");
     }
-    if (wipe_block_device(handle.fd(), get_block_device_size(handle.fd())) == 0) {
+    if (android::wipe_block_device(handle.fd()) == 0) {
         //Perform oem PostWipeData if Android userdata partition has been erased
-        bool support_oem_postwipedata = false;
-        if (partition_name == "userdata") {
-            PostWipeData();
-            support_oem_postwipedata = OemPostWipeData(device);
-        }
+        // bool support_oem_postwipedata = false;
+        // if (partition_name == "userdata") {
+        //     PostWipeData();
+        //     support_oem_postwipedata = OemPostWipeData(device);
+        // }
 
-        if (!support_oem_postwipedata) {
+        // if (!support_oem_postwipedata) {
             return device->WriteStatus(FastbootResult::OKAY, "Erasing succeeded");
-        } else {
-            //Write device status in OemPostWipeData(), so just return true
-            return true;
-        }
+        // } else {
+        //     //Write device status in OemPostWipeData(), so just return true
+        //     return true;
+        // }
     }
     return device->WriteStatus(FastbootResult::FAIL, "Erasing failed");
 }
 
+namespace {
+    struct FdiskPartitionDeleter {
+        FdiskPartitionDeleter() {};
+        void operator()(struct fdisk_partition* pa) const {
+            fdisk_unref_partition(pa);
+        };
+    };
+
+    struct FdiskContextDeleter {
+        FdiskContextDeleter() {};
+        void operator()(struct fdisk_context *fdc) const {
+            if (fdisk_get_devfd(fdc))
+            {
+                fdisk_deassign_device(fdc, 0);
+            }
+            fdisk_unref_context(fdc);
+        };
+    };
+
+
+    static std::unique_ptr<struct fdisk_context, FdiskContextDeleter> context_from_device(FastbootDevice *device, std::string block_device_path) {
+        if (block_device_path.empty()) {
+            return nullptr;
+        }
+
+        PartitionHandle handle;
+        if (!OpenPartition(device, block_device_path, &handle, O_WRONLY | O_DIRECT)) {
+            LOG(ERROR) << "Cannot create context for device " << block_device_path << " as failed to open";
+            return nullptr;
+        }
+
+        std::unique_ptr<struct fdisk_context, FdiskContextDeleter> fd(fdisk_new_context(), FdiskContextDeleter());
+        if (!fd) return nullptr;
+
+        if (fdisk_disable_dialogs(fd.get(), 1)) {
+            return nullptr;
+        }
+
+        if (fdisk_assign_device(fd.get(), block_device_path.c_str(), false) < 0) {
+            return nullptr;
+        }
+
+        // TODO: Check this... it should be the same as pi-gen
+        fdisk_save_user_grain(fd.get(), (4 * 1024 * 1024));
+
+        return std::move(fd);
+    }
+
+    static void release_context(struct fdisk_context *fd) {
+        if (!fd) return;
+        fdisk_deassign_device(fd, 0);
+        fdisk_unref_context(fd);
+    }
+
+    #define PARTINIT_USAGE "e.g:\r\n\toem partinit mmcblk0 DOS [id]"
+    static bool oem_cmd_partinit(FastbootDevice* device, const std::vector<std::string>& args) {
+        if (args.size() < 4) {
+            return device->WriteStatus(FastbootResult::FAIL, "Invalid argument count. Wanted oem partinit mmcblk0 DOS [id]");
+        }
+        std::unique_ptr<struct fdisk_context, FdiskContextDeleter> fd;
+        auto target_device = args[2];
+        auto disk_label = args[3];
+        target_device.insert(0, "/dev/");
+
+        if (!(fd = context_from_device(device, target_device))) {
+            return device->WriteStatus(FastbootResult::FAIL, "Invalid argument count. " PARTINIT_USAGE);
+        }
+
+        if(fdisk_create_disklabel(fd.get(), disk_label.c_str())) {
+            return device->WriteStatus(FastbootResult::FAIL, "Invalid label. " PARTINIT_USAGE);
+        }
+
+        // label_id is optional.
+        // DOS implementation is strtoul (can be 0x prefixed)
+        if (args.size() == 5) {
+            if(fdisk_set_disklabel_id_from_string(fd.get(), args[4].c_str())) {
+                return device->WriteStatus(FastbootResult::FAIL, "Invalid id. " PARTINIT_USAGE);
+            }
+        }
+
+        if (fdisk_write_disklabel(fd.get())) {
+            return device->WriteStatus(FastbootResult::FAIL, "Failed to write the disk label. " PARTINIT_USAGE);
+        }
+
+        if (fdisk_reread_partition_table(fd.get())) {
+            return device->WriteStatus(FastbootResult::FAIL, "Could not update partition table.");
+        }
+
+        return device->WriteStatus(FastbootResult::OKAY, "Initialised partition successfully");
+    }
+
+    static std::unique_ptr<struct fdisk_partition, FdiskPartitionDeleter> append_partition_template(struct fdisk_parttype *type, uint64_t size) {
+        std::unique_ptr<struct fdisk_partition, FdiskPartitionDeleter> pa(fdisk_new_partition(), FdiskPartitionDeleter());
+        if (!pa) return nullptr;
+
+        if (fdisk_partition_start_follow_default(pa.get(), 1))
+            return nullptr;
+
+        if (fdisk_partition_partno_follow_default(pa.get(), 1))
+            return nullptr;
+
+        /*
+        if (fdisk_partition_set_name(pa, name))
+            return nullptr;
+        */
+
+        if (fdisk_partition_set_type(pa.get(), type))
+            return nullptr;
+
+        if (size) {
+            if (fdisk_partition_set_size(pa.get(), size))
+                return nullptr;
+        } else {
+            if (fdisk_partition_end_follow_default(pa.get(), 1))
+                return nullptr;
+        }
+
+        /*
+        if (uuid && fdisk_partition_set_uuid(pa, uuid))
+            return nullptr;
+        */
+
+        /*
+        * Also possible to set attrs
+        */
+
+        return pa;
+    }
+
+    #define PARTAPP_USAGE "e.g:\r\n\toem partapp mmcblk0 <hex code> <size>"
+    static bool oem_cmd_partapp(FastbootDevice* device, const std::vector<std::string>& args) {
+        int ret = -1;
+
+
+        if (args.size() < 4) {
+            return device->WriteStatus(FastbootResult::FAIL, "Invalid argument count. "  PARTAPP_USAGE);
+        }
+
+        auto block_device = args[2];
+        auto partition_type = args[3];
+        block_device.insert(0, "/dev/");
+
+        auto fd = context_from_device(device, block_device);
+        if (!fd) {
+            return device->WriteStatus(FastbootResult::FAIL, "Incorrect block device. " PARTAPP_USAGE);
+        }
+
+        unsigned int sector_size = fdisk_get_sector_size(fd.get());
+
+        struct fdisk_label *lb;
+        if (!(lb = fdisk_get_label(fd.get(), NULL))) {
+            return device->WriteStatus(FastbootResult::FAIL, "Partition table not initialised");
+        }
+        struct fdisk_parttype *pt;
+        /*
+        if (!type || !(pt = fdisk_label_get_parttype_from_string(lb, type))) {
+            *response = "\r\n Partition type not recognised\r\n\r\n" PARTAPP_USAGE;
+            goto free_context;
+        }
+        */
+        unsigned int code;
+        if (1 != sscanf(partition_type.c_str(), "%x", &code) || !(pt = fdisk_label_get_parttype_from_code(lb, code))) {
+            return device->WriteStatus(FastbootResult::FAIL, "Partition type not recognised. " PARTAPP_USAGE);
+        }
+
+        uint64_t size = 0;
+        if (args.size() == 5) {
+            auto size_string = args[4];
+
+            if (!android::base::ParseUint(size_string, &size)) {
+                return device->WriteStatus(FastbootResult::FAIL, "Unable to parse parititon size. " PARTAPP_USAGE);
+            }
+
+            size /= sector_size;
+        }
+
+        auto pa = append_partition_template(pt, size);
+        if (!pa) {
+            return device->WriteStatus(FastbootResult::FAIL, "Could not create new partition template.");
+        }
+
+        if (fdisk_add_partition(fd.get(), pa.get(), NULL)) {
+            return device->WriteStatus(FastbootResult::FAIL, "Could not add partition.");
+        }
+
+        if (fdisk_write_disklabel(fd.get())) {
+            return device->WriteStatus(FastbootResult::FAIL, "Could not write disk label.");
+        }
+
+        if (fdisk_reread_partition_table(fd.get())) {
+            return device->WriteStatus(FastbootResult::FAIL, "Could not update partition table.");
+        }
+
+        return device->WriteStatus(FastbootResult::OKAY, "Wrote new partition.");
+    }
+
+
+    int process_spawn_blocking(int *r, std::string bin, char * const argv[], char * const envp[]) {
+        int ret;
+        pid_t pid;
+        int wstatus;
+
+        ret = posix_spawnp(
+            &pid,
+            bin.c_str(),
+            NULL, // file_actions
+            NULL, // spawn_attr
+            argv,
+            envp
+        );
+
+        if (ret) return ret;
+
+        do {
+            ret = waitpid(pid, &wstatus, 0);
+            if (ret == -1) break;
+        } while (!WIFEXITED(wstatus) && !WIFSIGNALED(wstatus));
+
+        if ((ret != -1) && WIFEXITED(wstatus)) {
+            ret = 0;
+            *r = WEXITSTATUS(wstatus);
+        } else {
+            ret = -1;
+        }
+
+        return ret;
+    }
+
+
+    // oem cryptinit <blkdev> <label>
+    static bool oem_cmd_cryptinit(FastbootDevice* device, const std::vector<std::string>& args) {
+        if (args.size() < 4) {
+            return device->WriteFail("Insufficient arguments. Usage: oem cryptinit <block_device> <label>");
+        }
+
+        if (args[2].empty()) {
+            return device->WriteFail("Block device not specified. Usage: oem cryptinit <block_device> <label>");
+        }
+
+        auto block_device = args[2];
+        block_device.insert(0, "/dev/");
+
+        // Will appear as /dev/disk/by-label/<part_label> once opened
+        if (args[3].empty()) {
+            return device->WriteFail("Label not specified. Usage: oem cryptinit <block_device> <label>");
+        }
+
+        PartitionHandle handle;
+        if (!OpenPartition(device, block_device, &handle, O_WRONLY | O_DIRECT)) {
+            return device->WriteFail("Cannot create context for device " + block_device + " as failed to open");
+        }
+
+        char cryptsetup[]     = "cryptsetup";
+        char batch_mode[]     = "--batch-mode";
+        char luksFormat[]     = "luksFormat";
+        char type[]           = "--type=luks2";
+        char cipher[]         = "--cipher=aes-xts-plain64";
+        char hash[]           = "--hash=sha256";
+        char key_size[]       = "--key-size=256";
+        //char uuid[]           = "--uuid=63bdaa59-d1dd-4f15-8d0e-f64642275879";
+        char label[]          = "--label";
+        char force_password[] = "--force-password";
+        char keyfile[]        = KEYFILE;
+
+        char * const argv[] = {
+            cryptsetup,
+            batch_mode,
+            luksFormat,
+            type,
+            cipher,
+            hash,
+            key_size,
+            //uuid,
+            label,
+            const_cast<char *>(args[3].c_str()), //!< Inserted
+            force_password,
+            keyfile,
+            const_cast<char *>(block_device.c_str()), //!< Appended
+            NULL
+        };
+
+        int subprocess_rc = -1;
+        int ret = process_spawn_blocking(&subprocess_rc, "cryptsetup", argv, NULL);
+
+        if (ret) {
+            return device->WriteFail(strerror(ret));
+        } else if (subprocess_rc) {
+            return device->WriteFail("Cryptsetup failed");
+        }
+
+        return device->WriteOkay("Cryptsetup completed.");
+    }
+
+    // oem cryptopen <blkdev> <mapped name>
+    static int oem_cmd_cryptopen(FastbootDevice* device, const std::vector<std::string>& args) {
+        if (args.size() < 4) {
+            return device->WriteFail("Insufficient arguments provided. Usage: oem cryptopen <block_device_path> <mapped_name>");
+        }
+        auto block_device_path = args[2];
+        auto mapped_name = args[3];
+        block_device_path.insert(0, "/dev/");
+
+        PartitionHandle handle;
+        if (!OpenPartition(device, block_device_path, &handle, O_WRONLY | O_DIRECT)) {
+            return device->WriteFail("Cannot perform cryptopen for device " + block_device_path + " as failed to open.");
+        }
+
+        // Will appear as /dev/disk/by-label/<part_label> once opened
+        if (args[3].empty()) {
+            return device->WriteFail("Cannot perform cryptopen for device " + block_device_path + " as no mapped name specified.");
+        }
+
+        char cryptsetup[] = "cryptsetup";
+        char luksOpen[]   = "luksOpen";
+
+        char * const argv[] = {
+            cryptsetup,
+            luksOpen,
+            const_cast<char *>(KEYFILE),
+            const_cast<char *>(block_device_path.c_str()),
+            const_cast<char *>(mapped_name.c_str()),
+            NULL
+        };
+
+        int subprocess_rc = -1;
+        int ret = process_spawn_blocking(&subprocess_rc, "cryptsetup", argv, NULL);
+
+        if (ret) {
+            return device->WriteFail(strerror(ret));
+        } else if (subprocess_rc) {
+            return device->WriteFail("cryptsetup luksOpen failed.");
+        }
+        return device->WriteOkay("cryptsetup luksOpen completed.");
+    }
+
+    ssize_t bulk_write(int bulk_in, const char *buf, size_t length)
+    {
+        size_t count = 0;
+        ssize_t ret;
+
+        do {
+            ret = TEMP_FAILURE_RETRY(write(bulk_in, buf + count, length - count));
+            if (ret < 0) {
+                return -1;
+            } else {
+                count += ret;
+            }
+        } while (count < length);
+
+        return count;
+    }
+
+
+    // oem led <LED> <value>
+    // oem led PWR 1
+    #define LED_USAGE "Usage:\r\n\toem led PWR 0"
+    #define LED_DEVICE_PATH "/sys/devices/platform/leds/leds/"
+    constexpr auto LED_ALLOWED_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    static bool oem_cmd_led(FastbootDevice* device, const std::vector<std::string>& args) {
+        if (args.size() < 4) {
+            return device->WriteFail("Incorrect arguments for LED command: " LED_USAGE);
+        }
+
+        auto led = args[2];
+        auto value = args[3];        
+        char led_device_path[PATH_MAX];
+        if (led.length() == 0 ||
+            (led.length() != strspn(led.c_str(), LED_ALLOWED_CHARS)) ||
+            (snprintf(led_device_path, PATH_MAX, LED_DEVICE_PATH "%s/brightness", led.c_str()) >= PATH_MAX))  {
+            return device->WriteFail("Incorrect LED device: " LED_USAGE);
+        }
+
+        int led_device = open(led_device_path, O_WRONLY | O_TRUNC);
+        if (led_device == -1) {
+            return device->WriteFail("Could not open LED device: " LED_USAGE);
+        }
+
+        // Happy to let the kernel validate this for us
+        if (value.length() != bulk_write(led_device, value.c_str(), value.length())) {
+            return device->WriteFail("Could not wite LED value.");
+        } else {
+            return device->WriteOkay("Wrote LED value");
+        }
+    }
+
+    #define DOWNLOAD_FILE_USAGE "e.g:\r\n\toem download-file <path-to-destination>"
+    static bool oem_cmd_download_file(FastbootDevice* device, const std::vector<std::string>& args) {
+        if (args.size() < 3) {
+            return device->WriteStatus(FastbootResult::FAIL, "Invalid argument count. Wanted oem download-file <current-path> <path-to-destination>");
+        }
+        auto path = args[2].c_str();
+        FILE* file = fopen(path, "w+");
+        if (file == NULL){
+            return device->WriteFail("Error opening file, ERRNO: " + std::to_string(errno));
+        }
+        int size = device->download_data().size();
+        int cursor = 0;
+        int page_size = 0;
+        char *ptr_data = device->download_data().data();
+
+        if (size==0){
+            return device->WriteFail("Buffer size zero. Check file was successfully staged");
+        }
+        page_size = sysconf(_SC_PAGE_SIZE);
+
+        while (cursor < size)
+        {
+            cursor += fwrite(ptr_data + cursor, sizeof device->download_data().data()[0], std::min(page_size, size - cursor), file);
+            fflush(file);
+        }
+
+        device->download_data().clear();
+        return device->WriteStatus(FastbootResult::OKAY, "Write Successful!");
+    }
+
+    #define UPLOAD_FILE_USAGE "e.g:\r\n\toem upload-file <path-on-client>"
+    static bool oem_cmd_upload_file(FastbootDevice* device, const std::vector<std::string>& args) {
+        if (args.size() < 3) {
+            return device->WriteStatus(FastbootResult::FAIL, "Invalid argument count. Wanted [oem upload-file <path-on-client>]");
+        }
+        auto path = args[2].c_str();
+    
+        FILE* file = fopen(path, "r");
+        if (file == NULL){
+            return device->WriteFail("Error opening file, ERRNO: " + std::to_string(errno));
+        }
+
+        // Get file size
+        fseek(file, 0, SEEK_END);
+        int size = ftell(file);
+        rewind(file);
+        if (size==0){
+            return device->WriteFail("Filesize zero. Will not upload empty file");
+        }
+        // Resize data buffer to match that size
+        device->download_data().resize(size);
+
+        int cursor = 0;
+        int page_size = sysconf(_SC_PAGE_SIZE);
+        char *ptr_data = device->download_data().data();
+
+        while (cursor < size)
+        {
+            cursor += fread(ptr_data + cursor, sizeof device->download_data().data()[0], std::min(page_size, size - cursor), file);
+        }
+        return device->WriteStatus(FastbootResult::OKAY, "Write Successful!");
+    }
+} //namespace anonymous
+
 bool OemCmdHandler(FastbootDevice* device, const std::vector<std::string>& args) {
-    auto fastboot_hal = device->fastboot_hal();
-    if (!fastboot_hal) {
-        return device->WriteStatus(FastbootResult::FAIL, "Unable to open fastboot HAL");
+
+    std::string message = {};
+    // auto status = fastboot_hal->doOemCommand(args[0], &message);
+    // if (!status.isOk()) {
+    //     LOG(ERROR) << "Unable to do OEM command " << args[0].c_str() << status.getDescription();
+    //     return device->WriteStatus(FastbootResult::FAIL,
+    //                                "Unable to do OEM command " + status.getDescription());
+    // }
+
+    // device->WriteInfo(message);
+    std::vector<std::string> split_args = android::base::Split(args[0], " ");
+    auto command_name = split_args[1];
+
+    if (command_name == "led") {
+        return oem_cmd_led(device, split_args);
+    } else if (command_name == "cryptinit") {
+        return oem_cmd_cryptinit(device, split_args);
+    } else if (command_name == "cryptopen") {
+        return oem_cmd_cryptopen(device, split_args);
+    } else if (command_name == "partinit") {
+        return oem_cmd_partinit(device, split_args);
+    } else if (command_name == "partapp") {
+        return oem_cmd_partapp(device, split_args);
+    } else if (command_name == "download-file") {
+        return oem_cmd_download_file(device, split_args);
+    } else if (command_name == "upload-file") {
+        return oem_cmd_upload_file(device, split_args);
     }
 
-    //Disable "oem postwipedata userdata" to prevent user wipe oem userdata only.
-    if (args[0] == "oem postwipedata userdata") {
-        return device->WriteStatus(FastbootResult::FAIL, "Unable to do oem postwipedata userdata");
-    }
-    std::string message;
-    auto status = fastboot_hal->doOemCommand(args[0], &message);
-    if (!status.isOk()) {
-        LOG(ERROR) << "Unable to do OEM command " << args[0].c_str() << status.getDescription();
-        return device->WriteStatus(FastbootResult::FAIL,
-                                   "Unable to do OEM command " + status.getDescription());
-    }
-
-    device->WriteInfo(message);
-    return device->WriteStatus(FastbootResult::OKAY, message);
+    return device->WriteFail("Unknown OEM command.");
 }
 
 bool DownloadHandler(FastbootDevice* device, const std::vector<std::string>& args) {
@@ -310,8 +784,30 @@ bool DownloadHandler(FastbootDevice* device, const std::vector<std::string>& arg
         return device->WriteStatus(FastbootResult::OKAY, "");
     }
 
-    PLOG(ERROR) << "Couldn't download data";
+    //PLOG(ERROR) << "Couldn't download data";
     return device->WriteStatus(FastbootResult::FAIL, "Couldn't download data");
+}
+
+bool UploadHandler(FastbootDevice* device, const std::vector<std::string>& args) {
+    unsigned int size;
+    
+    // download data size should already be set by oem cmd
+    size = device->download_data().size();
+
+    if (size == 0) {
+        return device->WriteStatus(FastbootResult::FAIL, "Invalid size (0)");
+    }
+
+    if (!device->WriteStatus(FastbootResult::DATA, android::base::StringPrintf("%08x", size))) {
+        return false;
+    }
+
+    // Data needs to already be staged to the device->download_data buffer for this to work.
+    if (device->HandleData(false, &device->download_data())) {
+        device->download_data().clear();
+        return device->WriteStatus(FastbootResult::OKAY, "");
+    }
+    return device->WriteStatus(FastbootResult::FAIL, "Couldn't upload data");
 }
 
 bool SetActiveHandler(FastbootDevice* device, const std::vector<std::string>& args) {
@@ -330,15 +826,15 @@ bool SetActiveHandler(FastbootDevice* device, const std::vector<std::string>& ar
         return device->WriteStatus(FastbootResult::FAIL, "Bad slot suffix");
     }
 
-    // Non-A/B devices will not have a boot control HAL.
-    auto boot_control_hal = device->boot_control_hal();
-    if (!boot_control_hal) {
-        return device->WriteStatus(FastbootResult::FAIL,
-                                   "Cannot set slot: boot control HAL absent");
-    }
-    if (slot >= boot_control_hal->GetNumSlots()) {
-        return device->WriteStatus(FastbootResult::FAIL, "Slot out of range");
-    }
+    // // Non-A/B devices will not have a boot control HAL.
+    // auto boot_control_hal = device->boot_control_hal();
+    // if (!boot_control_hal) {
+    //     return device->WriteStatus(FastbootResult::FAIL,
+    //                                "Cannot set slot: boot control HAL absent");
+    // }
+    // if (slot >= boot_control_hal->GetNumSlots()) {
+    //     return device->WriteStatus(FastbootResult::FAIL, "Slot out of range");
+    // }
 
     // If the slot is not changing, do nothing.
     if (args[1] == device->GetCurrentSlot()) {
@@ -346,39 +842,39 @@ bool SetActiveHandler(FastbootDevice* device, const std::vector<std::string>& ar
     }
 
     // Check how to handle the current snapshot state.
-    if (auto hal11 = device->boot1_1()) {
-        auto merge_status = hal11->getSnapshotMergeStatus();
-        if (merge_status == MergeStatus::MERGING) {
-            return device->WriteFail("Cannot change slots while a snapshot update is in progress");
-        }
-        // Note: we allow the slot change if the state is SNAPSHOTTED. First-
-        // stage init does not have access to the HAL, and uses the slot number
-        // and /metadata OTA state to determine whether a slot change occurred.
-        // Booting into the old slot would erase the OTA, and switching A->B->A
-        // would simply resume it if no boots occur in between. Re-flashing
-        // partitions implicitly cancels the OTA, so leaving the state as-is is
-        // safe.
-        if (merge_status == MergeStatus::SNAPSHOTTED) {
-            device->WriteInfo(
-                    "Changing the active slot with a snapshot applied may cancel the"
-                    " update.");
-        }
-    }
+    // if (auto hal11 = device->boot1_1()) {
+    //     auto merge_status = hal11->getSnapshotMergeStatus();
+    //     if (merge_status == MergeStatus::MERGING) {
+    //         return device->WriteFail("Cannot change slots while a snapshot update is in progress");
+    //     }
+    //     // Note: we allow the slot change if the state is SNAPSHOTTED. First-
+    //     // stage init does not have access to the HAL, and uses the slot number
+    //     // and /metadata OTA state to determine whether a slot change occurred.
+    //     // Booting into the old slot would erase the OTA, and switching A->B->A
+    //     // would simply resume it if no boots occur in between. Re-flashing
+    //     // partitions implicitly cancels the OTA, so leaving the state as-is is
+    //     // safe.
+    //     if (merge_status == MergeStatus::SNAPSHOTTED) {
+    //         device->WriteInfo(
+    //                 "Changing the active slot with a snapshot applied may cancel the"
+    //                 " update.");
+    //     }
+    // }
 
-    CommandResult ret = boot_control_hal->SetActiveBootSlot(slot);
-    if (ret.success) {
-        // Save as slot suffix to match the suffix format as returned from
-        // the boot control HAL.
-        auto current_slot = "_" + args[1];
-        device->set_active_slot(current_slot);
-        return device->WriteStatus(FastbootResult::OKAY, "");
-    }
+    // CommandResult ret = boot_control_hal->SetActiveBootSlot(slot);
+    // if (ret.success) {
+    //     // Save as slot suffix to match the suffix format as returned from
+    //     // the boot control HAL.
+    //     auto current_slot = "_" + args[1];
+    //     device->set_active_slot(current_slot);
+    //     return device->WriteStatus(FastbootResult::OKAY, "");
+    // }
     return device->WriteStatus(FastbootResult::FAIL, "Unable to set slot");
 }
 
 bool ShutDownHandler(FastbootDevice* device, const std::vector<std::string>& /* args */) {
     auto result = device->WriteStatus(FastbootResult::OKAY, "Shutting down");
-    android::base::SetProperty(ANDROID_RB_PROPERTY, "shutdown,fastboot");
+    // android::base::SetProperty(ANDROID_RB_PROPERTY, "shutdown,fastboot");
     device->CloseDevice();
     TEMP_FAILURE_RETRY(pause());
     return result;
@@ -386,7 +882,7 @@ bool ShutDownHandler(FastbootDevice* device, const std::vector<std::string>& /* 
 
 bool RebootHandler(FastbootDevice* device, const std::vector<std::string>& /* args */) {
     auto result = device->WriteStatus(FastbootResult::OKAY, "Rebooting");
-    android::base::SetProperty(ANDROID_RB_PROPERTY, "reboot,from_fastboot");
+    // android::base::SetProperty(ANDROID_RB_PROPERTY, "reboot,from_fastboot");
     device->CloseDevice();
     TEMP_FAILURE_RETRY(pause());
     return result;
@@ -394,7 +890,7 @@ bool RebootHandler(FastbootDevice* device, const std::vector<std::string>& /* ar
 
 bool RebootBootloaderHandler(FastbootDevice* device, const std::vector<std::string>& /* args */) {
     auto result = device->WriteStatus(FastbootResult::OKAY, "Rebooting bootloader");
-    android::base::SetProperty(ANDROID_RB_PROPERTY, "reboot,bootloader");
+    // android::base::SetProperty(ANDROID_RB_PROPERTY, "reboot,bootloader");
     device->CloseDevice();
     TEMP_FAILURE_RETRY(pause());
     return result;
@@ -402,86 +898,86 @@ bool RebootBootloaderHandler(FastbootDevice* device, const std::vector<std::stri
 
 bool RebootFastbootHandler(FastbootDevice* device, const std::vector<std::string>& /* args */) {
     auto result = device->WriteStatus(FastbootResult::OKAY, "Rebooting fastboot");
-    android::base::SetProperty(ANDROID_RB_PROPERTY, "reboot,fastboot");
+    // android::base::SetProperty(ANDROID_RB_PROPERTY, "reboot,fastboot");
     device->CloseDevice();
     TEMP_FAILURE_RETRY(pause());
     return result;
 }
 
-static bool EnterRecovery() {
-    const char msg_switch_to_recovery = 'r';
+// static bool EnterRecovery() {
+//     const char msg_switch_to_recovery = 'r';
 
-    android::base::unique_fd sock(socket(AF_UNIX, SOCK_STREAM, 0));
-    if (sock < 0) {
-        PLOG(ERROR) << "Couldn't create sock";
-        return false;
-    }
+//     android::base::unique_fd sock(socket(AF_UNIX, SOCK_STREAM, 0));
+//     if (sock < 0) {
+//         PLOG(ERROR) << "Couldn't create sock";
+//         return false;
+//     }
 
-    struct sockaddr_un addr = {.sun_family = AF_UNIX};
-    strncpy(addr.sun_path, "/dev/socket/recovery", sizeof(addr.sun_path) - 1);
-    if (connect(sock.get(), (struct sockaddr*)&addr, sizeof(addr)) < 0) {
-        PLOG(ERROR) << "Couldn't connect to recovery";
-        return false;
-    }
-    // Switch to recovery will not update the boot reason since it does not
-    // require a reboot.
-    auto ret = write(sock.get(), &msg_switch_to_recovery, sizeof(msg_switch_to_recovery));
-    if (ret != sizeof(msg_switch_to_recovery)) {
-        PLOG(ERROR) << "Couldn't write message to switch to recovery";
-        return false;
-    }
+//     struct sockaddr_un addr = {.sun_family = AF_UNIX};
+//     strncpy(addr.sun_path, "/dev/socket/recovery", sizeof(addr.sun_path) - 1);
+//     if (connect(sock.get(), (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+//         PLOG(ERROR) << "Couldn't connect to recovery";
+//         return false;
+//     }
+//     // Switch to recovery will not update the boot reason since it does not
+//     // require a reboot.
+//     auto ret = write(sock.get(), &msg_switch_to_recovery, sizeof(msg_switch_to_recovery));
+//     if (ret != sizeof(msg_switch_to_recovery)) {
+//         PLOG(ERROR) << "Couldn't write message to switch to recovery";
+//         return false;
+//     }
 
-    return true;
-}
+//     return true;
+// }
 
-bool RebootRecoveryHandler(FastbootDevice* device, const std::vector<std::string>& /* args */) {
-    auto status = true;
-    if (EnterRecovery()) {
-        status = device->WriteStatus(FastbootResult::OKAY, "Rebooting to recovery");
-    } else {
-        status = device->WriteStatus(FastbootResult::FAIL, "Unable to reboot to recovery");
-    }
-    device->CloseDevice();
-    TEMP_FAILURE_RETRY(pause());
-    return status;
-}
+// bool RebootRecoveryHandler(FastbootDevice* device, const std::vector<std::string>& /* args */) {
+//     auto status = true;
+//     if (EnterRecovery()) {
+//         status = device->WriteStatus(FastbootResult::OKAY, "Rebooting to recovery");
+//     } else {
+//         status = device->WriteStatus(FastbootResult::FAIL, "Unable to reboot to recovery");
+//     }
+//     device->CloseDevice();
+//     TEMP_FAILURE_RETRY(pause());
+//     return status;
+// }
 
 // Helper class for opening a handle to a MetadataBuilder and writing the new
-// partition table to the same place it was read.
-class PartitionBuilder {
-  public:
-    explicit PartitionBuilder(FastbootDevice* device, const std::string& partition_name);
+// // partition table to the same place it was read.
+// class PartitionBuilder {
+//   public:
+//     explicit PartitionBuilder(FastbootDevice* device, const std::string& partition_name);
 
-    bool Write();
-    bool Valid() const { return !!builder_; }
-    MetadataBuilder* operator->() const { return builder_.get(); }
+//     bool Write();
+//     bool Valid() const { return !!builder_; }
+//     MetadataBuilder* operator->() const { return builder_.get(); }
 
-  private:
-    FastbootDevice* device_;
-    std::string super_device_;
-    uint32_t slot_number_;
-    std::unique_ptr<MetadataBuilder> builder_;
-};
+//   private:
+//     FastbootDevice* device_;
+//     std::string super_device_;
+//     uint32_t slot_number_;
+//     std::unique_ptr<MetadataBuilder> builder_;
+// };
 
-PartitionBuilder::PartitionBuilder(FastbootDevice* device, const std::string& partition_name)
-    : device_(device) {
-    std::string slot_suffix = GetSuperSlotSuffix(device, partition_name);
-    slot_number_ = android::fs_mgr::SlotNumberForSlotSuffix(slot_suffix);
-    auto super_device = FindPhysicalPartition(fs_mgr_get_super_partition_name(slot_number_));
-    if (!super_device) {
-        return;
-    }
-    super_device_ = *super_device;
-    builder_ = MetadataBuilder::New(super_device_, slot_number_);
-}
+// PartitionBuilder::PartitionBuilder(FastbootDevice* device, const std::string& partition_name)
+//     : device_(device) {
+//     std::string slot_suffix = GetSuperSlotSuffix(device, partition_name);
+//     slot_number_ = android::fs_mgr::SlotNumberForSlotSuffix(slot_suffix);
+//     auto super_device = FindPhysicalPartition(fs_mgr_get_super_partition_name(slot_number_));
+//     if (!super_device) {
+//         return;
+//     }
+//     super_device_ = *super_device;
+//     builder_ = MetadataBuilder::New(super_device_, slot_number_);
+// }
 
-bool PartitionBuilder::Write() {
-    auto metadata = builder_->Export();
-    if (!metadata) {
-        return false;
-    }
-    return UpdateAllPartitionMetadata(device_, super_device_, *metadata.get());
-}
+// bool PartitionBuilder::Write() {
+//     auto metadata = builder_->Export();
+//     if (!metadata) {
+//         return false;
+//     }
+//     return UpdateAllPartitionMetadata(device_, super_device_, *metadata.get());
+// }
 
 bool CreatePartitionHandler(FastbootDevice* device, const std::vector<std::string>& args) {
     if (args.size() < 3) {
@@ -498,27 +994,27 @@ bool CreatePartitionHandler(FastbootDevice* device, const std::vector<std::strin
         return device->WriteFail("Invalid partition size");
     }
 
-    PartitionBuilder builder(device, partition_name);
-    if (!builder.Valid()) {
-        return device->WriteFail("Could not open super partition");
-    }
-    // TODO(112433293) Disallow if the name is in the physical table as well.
-    if (builder->FindPartition(partition_name)) {
-        return device->WriteFail("Partition already exists");
-    }
+    // PartitionBuilder builder(device, partition_name);
+    // if (!builder.Valid()) {
+    //     return device->WriteFail("Could not open super partition");
+    // }
+    // // TODO(112433293) Disallow if the name is in the physical table as well.
+    // if (builder->FindPartition(partition_name)) {
+    //     return device->WriteFail("Partition already exists");
+    // }
 
-    auto partition = builder->AddPartition(partition_name, 0);
-    if (!partition) {
-        return device->WriteFail("Failed to add partition");
-    }
-    if (!builder->ResizePartition(partition, partition_size)) {
-        builder->RemovePartition(partition_name);
-        return device->WriteFail("Not enough space for partition");
-    }
-    if (!builder.Write()) {
+    // auto partition = builder->AddPartition(partition_name, 0);
+    // if (!partition) {
+    //     return device->WriteFail("Failed to add partition");
+    // }
+    // if (!builder->ResizePartition(partition, partition_size)) {
+    //     builder->RemovePartition(partition_name);
+    //     return device->WriteFail("Not enough space for partition");
+    // }
+    // if (!builder.Write()) {
         return device->WriteFail("Failed to write partition table");
-    }
-    return device->WriteOkay("Partition created");
+    // }
+    // return device->WriteOkay("Partition created");
 }
 
 bool DeletePartitionHandler(FastbootDevice* device, const std::vector<std::string>& args) {
@@ -532,15 +1028,15 @@ bool DeletePartitionHandler(FastbootDevice* device, const std::vector<std::strin
 
     std::string partition_name = args[1];
 
-    PartitionBuilder builder(device, partition_name);
-    if (!builder.Valid()) {
-        return device->WriteFail("Could not open super partition");
-    }
-    builder->RemovePartition(partition_name);
-    if (!builder.Write()) {
+    // PartitionBuilder builder(device, partition_name);
+    // if (!builder.Valid()) {
+    //     return device->WriteFail("Could not open super partition");
+    // }
+    // builder->RemovePartition(partition_name);
+    // if (!builder.Write()) {
         return device->WriteFail("Failed to write partition table");
-    }
-    return device->WriteOkay("Partition deleted");
+    // }
+    // return device->WriteOkay("Partition deleted");
 }
 
 bool ResizePartitionHandler(FastbootDevice* device, const std::vector<std::string>& args) {
@@ -558,42 +1054,42 @@ bool ResizePartitionHandler(FastbootDevice* device, const std::vector<std::strin
         return device->WriteFail("Invalid partition size");
     }
 
-    PartitionBuilder builder(device, partition_name);
-    if (!builder.Valid()) {
-        return device->WriteFail("Could not open super partition");
-    }
+    // PartitionBuilder builder(device, partition_name);
+    // if (!builder.Valid()) {
+    //     return device->WriteFail("Could not open super partition");
+    // }
 
-    auto partition = builder->FindPartition(partition_name);
-    if (!partition) {
-        return device->WriteFail("Partition does not exist");
-    }
+    // auto partition = builder->FindPartition(partition_name);
+    // if (!partition) {
+    //     return device->WriteFail("Partition does not exist");
+    // }
 
-    // Remove the updated flag to cancel any snapshots.
-    uint32_t attrs = partition->attributes();
-    partition->set_attributes(attrs & ~LP_PARTITION_ATTR_UPDATED);
+    // // Remove the updated flag to cancel any snapshots.
+    // uint32_t attrs = partition->attributes();
+    // partition->set_attributes(attrs & ~LP_PARTITION_ATTR_UPDATED);
 
-    if (!builder->ResizePartition(partition, partition_size)) {
-        return device->WriteFail("Not enough space to resize partition");
-    }
-    if (!builder.Write()) {
+    // if (!builder->ResizePartition(partition, partition_size)) {
+    //     return device->WriteFail("Not enough space to resize partition");
+    // }
+    // if (!builder.Write()) {
         return device->WriteFail("Failed to write partition table");
-    }
-    return device->WriteOkay("Partition resized");
+    // }
+    // return device->WriteOkay("Partition resized");
 }
 
-void CancelPartitionSnapshot(FastbootDevice* device, const std::string& partition_name) {
-    PartitionBuilder builder(device, partition_name);
-    if (!builder.Valid()) return;
+// void CancelPartitionSnapshot(FastbootDevice* device, const std::string& partition_name) {
+//     PartitionBuilder builder(device, partition_name);
+//     if (!builder.Valid()) return;
 
-    auto partition = builder->FindPartition(partition_name);
-    if (!partition) return;
+//     auto partition = builder->FindPartition(partition_name);
+//     if (!partition) return;
 
-    // Remove the updated flag to cancel any snapshots.
-    uint32_t attrs = partition->attributes();
-    partition->set_attributes(attrs & ~LP_PARTITION_ATTR_UPDATED);
+//     // Remove the updated flag to cancel any snapshots.
+//     uint32_t attrs = partition->attributes();
+//     partition->set_attributes(attrs & ~LP_PARTITION_ATTR_UPDATED);
 
-    builder.Write();
-}
+//     builder.Write();
+// }
 
 bool FlashHandler(FastbootDevice* device, const std::vector<std::string>& args) {
     if (args.size() < 2) {
@@ -606,119 +1102,121 @@ bool FlashHandler(FastbootDevice* device, const std::vector<std::string>& args) 
     }
 
     const auto& partition_name = args[1];
-    if (IsProtectedPartitionDuringMerge(device, partition_name)) {
-        auto message = "Cannot flash " + partition_name + " while a snapshot update is in progress";
-        return device->WriteFail(message);
-    }
+    // if (IsProtectedPartitionDuringMerge(device, partition_name)) {
+    //     auto message = "Cannot flash " + partition_name + " while a snapshot update is in progress";
+    //     return device->WriteFail(message);
+    // }
 
-    if (LogicalPartitionExists(device, partition_name)) {
-        CancelPartitionSnapshot(device, partition_name);
-    }
+    // if (LogicalPartitionExists(device, partition_name)) {
+    //     CancelPartitionSnapshot(device, partition_name);
+    // }
 
     int ret = Flash(device, partition_name);
     if (ret < 0) {
         return device->WriteStatus(FastbootResult::FAIL, strerror(-ret));
     }
-    if (partition_name == "userdata") {
-        PostWipeData();
-    }
+    // if (partition_name == "userdata") {
+    //     PostWipeData();
+    // }
 
     return device->WriteStatus(FastbootResult::OKAY, "Flashing succeeded");
 }
 
-bool UpdateSuperHandler(FastbootDevice* device, const std::vector<std::string>& args) {
-    if (args.size() < 2) {
-        return device->WriteFail("Invalid arguments");
-    }
+// bool UpdateSuperHandler(FastbootDevice* device, const std::vector<std::string>& args) {
+//     if (args.size() < 2) {
+//         return device->WriteFail("Invalid arguments");
+//     }
 
-    if (GetDeviceLockStatus()) {
-        return device->WriteStatus(FastbootResult::FAIL, "Command not available on locked devices");
-    }
+//     if (GetDeviceLockStatus()) {
+//         return device->WriteStatus(FastbootResult::FAIL, "Command not available on locked devices");
+//     }
 
-    bool wipe = (args.size() >= 3 && args[2] == "wipe");
-    return UpdateSuper(device, args[1], wipe);
-}
+//     return device->WriteFail("Command unavailable");
 
-bool GsiHandler(FastbootDevice* device, const std::vector<std::string>& args) {
-    if (args.size() != 2) {
-        return device->WriteFail("Invalid arguments");
-    }
+//     // bool wipe = (args.size() >= 3 && args[2] == "wipe");
+//     // return UpdateSuper(device, args[1], wipe);
+// }
 
-    AutoMountMetadata mount_metadata;
-    if (!mount_metadata) {
-        return device->WriteFail("Could not find GSI install");
-    }
+// bool GsiHandler(FastbootDevice* device, const std::vector<std::string>& args) {
+//     if (args.size() != 2) {
+//         return device->WriteFail("Invalid arguments");
+//     }
 
-    if (!android::gsi::IsGsiInstalled()) {
-        return device->WriteStatus(FastbootResult::FAIL, "No GSI is installed");
-    }
+//     AutoMountMetadata mount_metadata;
+//     if (!mount_metadata) {
+//         return device->WriteFail("Could not find GSI install");
+//     }
 
-    if (args[1] == "wipe") {
-        if (!android::gsi::UninstallGsi()) {
-            return device->WriteStatus(FastbootResult::FAIL, strerror(errno));
-        }
-    } else if (args[1] == "disable") {
-        if (!android::gsi::DisableGsi()) {
-            return device->WriteStatus(FastbootResult::FAIL, strerror(errno));
-        }
-    }
-    return device->WriteStatus(FastbootResult::OKAY, "Success");
-}
+//     if (!android::gsi::IsGsiInstalled()) {
+//         return device->WriteStatus(FastbootResult::FAIL, "No GSI is installed");
+//     }
 
-bool SnapshotUpdateHandler(FastbootDevice* device, const std::vector<std::string>& args) {
-    // Note that we use the HAL rather than mounting /metadata, since we want
-    // our results to match the bootloader.
-    auto hal = device->boot1_1();
-    if (!hal) return device->WriteFail("Not supported");
+//     if (args[1] == "wipe") {
+//         if (!android::gsi::UninstallGsi()) {
+//             return device->WriteStatus(FastbootResult::FAIL, strerror(errno));
+//         }
+//     } else if (args[1] == "disable") {
+//         if (!android::gsi::DisableGsi()) {
+//             return device->WriteStatus(FastbootResult::FAIL, strerror(errno));
+//         }
+//     }
+//     return device->WriteStatus(FastbootResult::OKAY, "Success");
+// }
 
-    // If no arguments, return the same thing as a getvar. Note that we get the
-    // HAL first so we can return "not supported" before we return the less
-    // specific error message below.
-    if (args.size() < 2 || args[1].empty()) {
-        std::string message;
-        if (!GetSnapshotUpdateStatus(device, {}, &message)) {
-            return device->WriteFail("Could not determine update status");
-        }
-        device->WriteInfo(message);
-        return device->WriteOkay("");
-    }
+// bool SnapshotUpdateHandler(FastbootDevice* device, const std::vector<std::string>& args) {
+//     // Note that we use the HAL rather than mounting /metadata, since we want
+//     // our results to match the bootloader.
+//     auto hal = device->boot1_1();
+//     if (!hal) return device->WriteFail("Not supported");
 
-    MergeStatus status = hal->getSnapshotMergeStatus();
+//     // If no arguments, return the same thing as a getvar. Note that we get the
+//     // HAL first so we can return "not supported" before we return the less
+//     // specific error message below.
+//     if (args.size() < 2 || args[1].empty()) {
+//         std::string message;
+//         if (!GetSnapshotUpdateStatus(device, {}, &message)) {
+//             return device->WriteFail("Could not determine update status");
+//         }
+//         device->WriteInfo(message);
+//         return device->WriteOkay("");
+//     }
 
-    if (args.size() != 2) {
-        return device->WriteFail("Invalid arguments");
-    }
-    if (args[1] == "cancel") {
-        switch (status) {
-            case MergeStatus::SNAPSHOTTED:
-            case MergeStatus::MERGING: {
-                const auto ret = hal->SetSnapshotMergeStatus(MergeStatus::CANCELLED);
-                if (!ret.success) {
-                    device->WriteFail("Failed to SetSnapshotMergeStatus(MergeStatus::CANCELLED) " +
-                                      ret.errMsg);
-                }
-                break;
-            }
-            default:
-                break;
-        }
-    } else if (args[1] == "merge") {
-        if (status != MergeStatus::MERGING) {
-            return device->WriteFail("No snapshot merge is in progress");
-        }
+//     MergeStatus status = hal->getSnapshotMergeStatus();
 
-        auto sm = SnapshotManager::New();
-        if (!sm) {
-            return device->WriteFail("Unable to create SnapshotManager");
-        }
-        if (!sm->FinishMergeInRecovery()) {
-            return device->WriteFail("Unable to finish snapshot merge");
-        }
-    } else {
-        return device->WriteFail("Invalid parameter to snapshot-update");
-    }
-    return device->WriteStatus(FastbootResult::OKAY, "Success");
-}
+//     if (args.size() != 2) {
+//         return device->WriteFail("Invalid arguments");
+//     }
+//     if (args[1] == "cancel") {
+//         switch (status) {
+//             case MergeStatus::SNAPSHOTTED:
+//             case MergeStatus::MERGING: {
+//                 const auto ret = hal->SetSnapshotMergeStatus(MergeStatus::CANCELLED);
+//                 if (!ret.success) {
+//                     device->WriteFail("Failed to SetSnapshotMergeStatus(MergeStatus::CANCELLED) " +
+//                                       ret.errMsg);
+//                 }
+//                 break;
+//             }
+//             default:
+//                 break;
+//         }
+//     } else if (args[1] == "merge") {
+//         if (status != MergeStatus::MERGING) {
+//             return device->WriteFail("No snapshot merge is in progress");
+//         }
+
+//         auto sm = SnapshotManager::New();
+//         if (!sm) {
+//             return device->WriteFail("Unable to create SnapshotManager");
+//         }
+//         if (!sm->FinishMergeInRecovery()) {
+//             return device->WriteFail("Unable to finish snapshot merge");
+//         }
+//     } else {
+//         return device->WriteFail("Invalid parameter to snapshot-update");
+//     }
+//     return device->WriteStatus(FastbootResult::OKAY, "Success");
+// }
 
 namespace {
 // Helper of FetchHandler.
@@ -767,7 +1265,7 @@ class PartitionFetcher {
             return false;
         }
 
-        partition_size_ = get_block_device_size(handle_.fd());
+        partition_size_ = android::get_block_device_size(handle_.fd());
         if (partition_size_ == 0) {
             ret_ = device_->WriteOkay(android::base::StringPrintf("Partition %s has size 0",
                                                                   partition_name_.c_str()));

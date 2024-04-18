@@ -1,0 +1,11 @@
+[Unit]
+Description=Attach fastboot UDC
+After=configfs-init.service
+After=fastbootd.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/sys/kernel/config/usb_gadget/fastboot
+ExecStart=/usr/local/bin/fastboot_udc_attach
+Restart=no

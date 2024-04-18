@@ -16,6 +16,7 @@
 
 #include "usb_client.h"
 
+#include <climits>
 #include <endian.h>
 #include <fcntl.h>
 #include <linux/usb/ch9.h>
@@ -26,7 +27,9 @@
 #include <sys/types.h>
 
 #include <android-base/logging.h>
-#include <android-base/properties.h>
+// #include <android-base/properties.h>
+
+#include <systemd/sd-daemon.h>
 
 constexpr int kMaxPacketSizeFs = 64;
 constexpr int kMaxPacketSizeHs = 512;
@@ -215,7 +218,8 @@ static bool InitFunctionFs(usb_handle* h) {
             goto err;
         }
         // Signal only when writing the descriptors to ffs
-        android::base::SetProperty("sys.usb.ffs.ready", "1");
+        // android::base::SetProperty("sys.usb.ffs.ready", "1");
+	sd_notify(0, "READY=1");
     }
 
     h->bulk_out.reset(open(kUsbFfsFastbootOut, O_RDONLY));

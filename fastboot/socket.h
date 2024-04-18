@@ -40,7 +40,7 @@
 
 #include <android-base/macros.h>
 #include <cutils/sockets.h>
-#include <gtest/gtest_prod.h>
+// #include <gtest/gtest_prod.h>
 
 // Socket interface to be implemented for each platform.
 class Socket {
@@ -119,8 +119,8 @@ class Socket {
             socket_send_buffers_function_ = &socket_send_buffers;
 
   private:
-    FRIEND_TEST(SocketTest, TestTcpSendBuffers);
-    FRIEND_TEST(SocketTest, TestUdpSendBuffers);
+    // FRIEND_TEST(SocketTest, TestTcpSendBuffers);
+    // FRIEND_TEST(SocketTest, TestUdpSendBuffers);
 
     DISALLOW_COPY_AND_ASSIGN(Socket);
 };

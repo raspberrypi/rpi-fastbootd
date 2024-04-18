@@ -20,7 +20,7 @@
 #include <android-base/errors.h>
 #include <android-base/logging.h>
 #include <android-base/parseint.h>
-#include <android-base/properties.h>
+// #include <android-base/properties.h>
 #include <android-base/stringprintf.h>
 #include <android-base/strings.h>
 
@@ -49,7 +49,7 @@ ClientTcpTransport::ClientTcpTransport() {
     service_ = Socket::NewServer(Socket::Protocol::kTcp, kDefaultPort);
 
     // A workaround to notify recovery to continue its work.
-    android::base::SetProperty("sys.usb.ffs.ready", "1");
+    // android::base::SetProperty("sys.usb.ffs.ready", "1");
 }
 
 ssize_t ClientTcpTransport::Read(void* data, size_t len) {

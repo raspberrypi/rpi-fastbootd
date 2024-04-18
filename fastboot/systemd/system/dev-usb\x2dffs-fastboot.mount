@@ -1,0 +1,10 @@
+[Unit]
+Description=Fastboot FunctionFS
+Requires=configfs-init.service
+After=configfs-init.service
+
+[Mount]
+What=fastboot
+Where=/dev/usb-ffs/fastboot
+Type=functionfs
+Options=X-mount.mkdir

@@ -16,6 +16,7 @@
 
 #include "variables.h"
 
+#include <cstring>
 #include <inttypes.h>
 #include <stdio.h>
 
@@ -24,15 +25,17 @@
 #include <android-base/properties.h>
 #include <android-base/stringprintf.h>
 #include <android-base/strings.h>
-#include <android/hardware/boot/1.1/IBootControl.h>
-#include <ext4_utils/ext4_utils.h>
-#include <fs_mgr.h>
-#include <liblp/liblp.h>
+// #include <android/hardware/boot/1.1/IBootControl.h>
+// #include <ext4_utils/ext4_utils.h>
+// #include <fs_mgr.h>
+// #include <liblp/liblp.h>
 
-#include "BootControlClient.h"
+// #include "BootControlClient.h"
 #include "fastboot_device.h"
 #include "flashing.h"
 #include "utility.h"
+#include "spawn.h"
+#include "wait.h"
 
 #ifdef FB_ENABLE_FETCH
 static constexpr bool kEnableFetch = true;
@@ -40,9 +43,9 @@ static constexpr bool kEnableFetch = true;
 static constexpr bool kEnableFetch = false;
 #endif
 
-using MergeStatus = android::hal::BootControlClient::MergeStatus;
-using aidl::android::hardware::fastboot::FileSystemType;
-using namespace android::fs_mgr;
+// using MergeStatus = android::hal::BootControlClient::MergeStatus;
+// using aidl::android::hardware::fastboot::FileSystemType;
+// using namespace android::fs_mgr;
 using namespace std::string_literals;
 
 constexpr char kFastbootProtocolVersion[] = "0.4";
@@ -79,108 +82,141 @@ bool GetVndkVersion(FastbootDevice* /* device */, const std::vector<std::string>
 
 bool GetProduct(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
                 std::string* message) {
-    *message = android::base::GetProperty("ro.product.device", "");
+    android::base::ReadFileToString("/sys/firmware/devicetree/base/model", message);
     return true;
 }
 
 bool GetSerial(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
                std::string* message) {
-    *message = android::base::GetProperty("ro.serialno", "");
+    android::base::ReadFileToString("/proc/device-tree/serial-number", message);
     return true;
 }
 
 bool GetSecure(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
                std::string* message) {
-    *message = android::base::GetBoolProperty("ro.secure", "") ? "yes" : "no";
+    posix_spawn_file_actions_t action;
+    posix_spawn_file_actions_init(&action);
+    posix_spawn_file_actions_addopen (&action, STDOUT_FILENO, "/tmp/opt.log", O_WRONLY|O_CREAT, 0);
+
+    pid_t pid;
+    char *arg[] = {"/usr/local/bin/rpi-otp-private-key", "-c", NULL};
+    int status;
+    int ret;
+    int wstatus;
+    ret = posix_spawnp(&pid, "/usr/local/bin/rpi-otp-private-key", &action, NULL, arg, NULL);
+
+
+    if (ret) {
+        *message = strerror(ret);
+        return false;
+    }
+    else {
+    do {
+        ret = waitpid(pid, &wstatus, 0);
+        if (ret == -1) break;
+    } while (!WIFEXITED(wstatus) && !WIFSIGNALED(wstatus));
+
+    posix_spawn_file_actions_destroy(&action);
+    std::string secure;
+    android::base::ReadFileToString("/tmp/opt.log", &secure);
+    if (secure.find("1") != std::string::npos)
+    {
+        *message = "yes";
+    }
+    else
+    {
+        *message = "no";
+    }
     return true;
+    }
 }
 
 bool GetVariant(FastbootDevice* device, const std::vector<std::string>& /* args */,
                 std::string* message) {
-    auto fastboot_hal = device->fastboot_hal();
-    if (!fastboot_hal) {
+    // auto fastboot_hal = device->fastboot_hal();
+    // if (!fastboot_hal) {
         *message = "Fastboot HAL not found";
         return false;
-    }
-    std::string device_variant = "";
-    auto status = fastboot_hal->getVariant(&device_variant);
+    // }
+    // std::string device_variant = "";
+    // auto status = fastboot_hal->getVariant(&device_variant);
 
-    if (!status.isOk()) {
-        *message = "Unable to get device variant";
-        LOG(ERROR) << message->c_str() << status.getDescription();
-        return false;
-    }
+    // if (!status.isOk()) {
+    //     *message = "Unable to get device variant";
+    //     LOG(ERROR) << message->c_str() << status.getDescription();
+    //     return false;
+    // }
 
-    *message = device_variant;
-    return true;
+    // *message = device_variant;
+    // return true;
 }
 
 bool GetBatteryVoltageHelper(FastbootDevice* device, int32_t* battery_voltage) {
-    using aidl::android::hardware::health::HealthInfo;
+    // using aidl::android::hardware::health::HealthInfo;
 
-    auto health_hal = device->health_hal();
-    if (!health_hal) {
+    // auto health_hal = device->health_hal();
+    // if (!health_hal) {
         return false;
-    }
+    // }
 
-    HealthInfo health_info;
-    auto res = health_hal->getHealthInfo(&health_info);
-    if (!res.isOk()) return false;
-    *battery_voltage = health_info.batteryVoltageMillivolts;
-    return true;
+    // HealthInfo health_info;
+    // auto res = health_hal->getHealthInfo(&health_info);
+    // if (!res.isOk()) return false;
+    // *battery_voltage = health_info.batteryVoltageMillivolts;
+    // return true;
 }
 
 bool GetBatterySoCOk(FastbootDevice* device, const std::vector<std::string>& /* args */,
                      std::string* message) {
-    int32_t battery_voltage = 0;
-    if (!GetBatteryVoltageHelper(device, &battery_voltage)) {
+    // int32_t battery_voltage = 0;
+    // if (!GetBatteryVoltageHelper(device, &battery_voltage)) {
         *message = "Unable to read battery voltage";
         return false;
-    }
+    // }
 
-    auto fastboot_hal = device->fastboot_hal();
-    if (!fastboot_hal) {
-        *message = "Fastboot HAL not found";
-        return false;
-    }
+    // auto fastboot_hal = device->fastboot_hal();
+    // if (!fastboot_hal) {
+    //     *message = "Fastboot HAL not found";
+    //     return false;
+    // }
 
-    auto voltage_threshold = 0;
-    auto status = fastboot_hal->getBatteryVoltageFlashingThreshold(&voltage_threshold);
-    if (!status.isOk()) {
-        *message = "Unable to get battery voltage flashing threshold";
-        LOG(ERROR) << message->c_str() << status.getDescription();
-        return false;
-    }
-    *message = battery_voltage >= voltage_threshold ? "yes" : "no";
+    // auto voltage_threshold = 0;
+    // auto status = fastboot_hal->getBatteryVoltageFlashingThreshold(&voltage_threshold);
+    // if (!status.isOk()) {
+    //     *message = "Unable to get battery voltage flashing threshold";
+    //     LOG(ERROR) << message->c_str() << status.getDescription();
+    //     return false;
+    // }
+    // *message = battery_voltage >= voltage_threshold ? "yes" : "no";
 
-    return true;
+    // return true;
 }
 
 bool GetOffModeChargeState(FastbootDevice* device, const std::vector<std::string>& /* args */,
                            std::string* message) {
-    auto fastboot_hal = device->fastboot_hal();
-    if (!fastboot_hal) {
+    // auto fastboot_hal = device->fastboot_hal();
+    // if (!fastboot_hal) {
         *message = "Fastboot HAL not found";
         return false;
-    }
-    bool off_mode_charging_state = false;
-    auto status = fastboot_hal->getOffModeChargeState(&off_mode_charging_state);
-    if (!status.isOk()) {
-        *message = "Unable to get off mode charge state";
-        LOG(ERROR) << message->c_str() << status.getDescription();
-        return false;
-    }
-    *message = off_mode_charging_state ? "1" : "0";
-    return true;
+    // }
+    // bool off_mode_charging_state = false;
+    // auto status = fastboot_hal->getOffModeChargeState(&off_mode_charging_state);
+    // if (!status.isOk()) {
+    //     *message = "Unable to get off mode charge state";
+    //     LOG(ERROR) << message->c_str() << status.getDescription();
+    //     return false;
+    // }
+    // *message = off_mode_charging_state ? "1" : "0";
+    // return true;
 }
 
 bool GetBatteryVoltage(FastbootDevice* device, const std::vector<std::string>& /* args */,
                        std::string* message) {
     int32_t battery_voltage = 0;
-    if (GetBatteryVoltageHelper(device, &battery_voltage)) {
-        *message = std::to_string(battery_voltage);
-        return true;
-    }
+    // if (GetBatteryVoltageHelper(device, &battery_voltage)) {
+    //     *message = std::to_string(battery_voltage);
+    //     return true;
+    // }
     *message = "Unable to get battery voltage";
     return false;
 }
@@ -194,12 +230,12 @@ bool GetCurrentSlot(FastbootDevice* device, const std::vector<std::string>& /* a
 
 bool GetSlotCount(FastbootDevice* device, const std::vector<std::string>& /* args */,
                   std::string* message) {
-    auto boot_control_hal = device->boot_control_hal();
-    if (!boot_control_hal) {
-        *message = "0";
-    } else {
-        *message = std::to_string(boot_control_hal->GetNumSlots());
-    }
+    // auto boot_control_hal = device->boot_control_hal();
+    // if (!boot_control_hal) {
+    //     *message = "0";
+    // } else {
+    //     *message = std::to_string(boot_control_hal->GetNumSlots());
+    // }
     return true;
 }
 
@@ -214,16 +250,16 @@ bool GetSlotSuccessful(FastbootDevice* device, const std::vector<std::string>& a
         *message = "Invalid slot";
         return false;
     }
-    auto boot_control_hal = device->boot_control_hal();
-    if (!boot_control_hal) {
-        *message = "Device has no slots";
-        return false;
-    }
-    if (boot_control_hal->IsSlotMarkedSuccessful(slot).value_or(false)) {
-        *message = "no";
-    } else {
-        *message = "yes";
-    }
+    // auto boot_control_hal = device->boot_control_hal();
+    // if (!boot_control_hal) {
+    //     *message = "Device has no slots";
+    //     return false;
+    // }
+    // if (boot_control_hal->IsSlotMarkedSuccessful(slot).value_or(false)) {
+    //     *message = "no";
+    // } else {
+    //     *message = "yes";
+    // }
     return true;
 }
 
@@ -238,16 +274,16 @@ bool GetSlotUnbootable(FastbootDevice* device, const std::vector<std::string>& a
         *message = "Invalid slot";
         return false;
     }
-    auto boot_control_hal = device->boot_control_hal();
-    if (!boot_control_hal) {
-        *message = "Device has no slots";
-        return false;
-    }
-    if (!boot_control_hal->IsSlotBootable(slot).value_or(false)) {
-        *message = "yes";
-    } else {
-        *message = "no";
-    }
+    // auto boot_control_hal = device->boot_control_hal();
+    // if (!boot_control_hal) {
+    //     *message = "Device has no slots";
+    //     return false;
+    // }
+    // if (!boot_control_hal->IsSlotBootable(slot).value_or(false)) {
+    //     *message = "yes";
+    // } else {
+    //     *message = "no";
+    // }
     return true;
 }
 
@@ -302,7 +338,11 @@ bool GetPartitionSize(FastbootDevice* device, const std::vector<std::string>& ar
         *message = "Could not open partition";
         return false;
     }
-    uint64_t size = get_block_device_size(handle.fd());
+    if (!handle.Open(O_WRONLY)){
+        *message = "Could not open partition";
+        return false;
+    }
+    uint64_t size = android::get_block_device_size(handle.fd());
     *message = android::base::StringPrintf("0x%" PRIX64, size);
     return true;
 }
@@ -315,38 +355,39 @@ bool GetPartitionType(FastbootDevice* device, const std::vector<std::string>& ar
     }
 
     std::string partition_name = args[0];
-    if (!FindPhysicalPartition(partition_name) && !LogicalPartitionExists(device, partition_name)) {
+    // if (!FindPhysicalPartition(partition_name) && !LogicalPartitionExists(device, partition_name)) {
+    if (!FindPhysicalPartition(partition_name)) {
         *message = "Invalid partition";
         return false;
     }
 
-    auto fastboot_hal = device->fastboot_hal();
-    if (!fastboot_hal) {
-        *message = "raw";
-        return true;
-    }
+    // auto fastboot_hal = device->fastboot_hal();
+    // if (!fastboot_hal) {
+    //     *message = "raw";
+    //     return true;
+    // }
 
-    FileSystemType type;
-    auto status = fastboot_hal->getPartitionType(args[0], &type);
+    // FileSystemType type;
+    // auto status = fastboot_hal->getPartitionType(args[0], &type);
 
-    if (!status.isOk()) {
+    // if (!status.isOk()) {
         *message = "Unable to retrieve partition type";
-        LOG(ERROR) << message->c_str() << status.getDescription();
-    } else {
-        switch (type) {
-            case FileSystemType::RAW:
-                *message = "raw";
-                return true;
-            case FileSystemType::EXT4:
-                *message = "ext4";
-                return true;
-            case FileSystemType::F2FS:
-                *message = "f2fs";
-                return true;
-            default:
-                *message = "Unknown file system type";
-        }
-    }
+        // LOG(ERROR) << message->c_str() << status.getDescription();
+    // } else {
+    //     switch (type) {
+    //         case FileSystemType::RAW:
+    //             *message = "raw";
+    //             return true;
+    //         case FileSystemType::EXT4:
+    //             *message = "ext4";
+    //             return true;
+    //         case FileSystemType::F2FS:
+    //             *message = "f2fs";
+    //             return true;
+    //         default:
+    //             *message = "Unknown file system type";
+    //     }
+    // }
 
     return false;
 }
@@ -421,40 +462,42 @@ std::vector<std::vector<std::string>> GetAllPartitionArgsNoSlot(FastbootDevice* 
 
 bool GetHardwareRevision(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
                          std::string* message) {
-    *message = android::base::GetProperty("ro.revision", "");
-    return true;
+    // *message = android::base::GetProperty("ro.revision", "");
+    // return true;
+    return false;
 }
 
 bool GetSuperPartitionName(FastbootDevice* device, const std::vector<std::string>& /* args */,
                            std::string* message) {
-    uint32_t slot_number = SlotNumberForSlotSuffix(device->GetCurrentSlot());
-    *message = fs_mgr_get_super_partition_name(slot_number);
-    return true;
+    // uint32_t slot_number = SlotNumberForSlotSuffix(device->GetCurrentSlot());
+    // *message = fs_mgr_get_super_partition_name(slot_number);
+    // return true;
+    return false;
 }
 
 bool GetSnapshotUpdateStatus(FastbootDevice* device, const std::vector<std::string>& /* args */,
                              std::string* message) {
-    // Note that we use the HAL rather than mounting /metadata, since we want
-    // our results to match the bootloader.
-    auto hal = device->boot1_1();
-    if (!hal) {
+    // // Note that we use the HAL rather than mounting /metadata, since we want
+    // // our results to match the bootloader.
+    // auto hal = device->boot1_1();
+    // if (!hal) {
         *message = "not supported";
         return false;
-    }
+    // }
 
-    MergeStatus status = hal->getSnapshotMergeStatus();
-    switch (status) {
-        case MergeStatus::SNAPSHOTTED:
-            *message = "snapshotted";
-            break;
-        case MergeStatus::MERGING:
-            *message = "merging";
-            break;
-        default:
-            *message = "none";
-            break;
-    }
-    return true;
+    // MergeStatus status = hal->getSnapshotMergeStatus();
+    // switch (status) {
+    //     case MergeStatus::SNAPSHOTTED:
+    //         *message = "snapshotted";
+    //         break;
+    //     case MergeStatus::MERGING:
+    //         *message = "merging";
+    //         break;
+    //     default:
+    //         *message = "none";
+    //         break;
+    // }
+    // return true;
 }
 
 bool GetCpuAbi(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
@@ -543,4 +586,30 @@ bool GetDmesg(FastbootDevice* device) {
     }
 
     return true;
+}
+
+bool GetPubkey(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
+                     std::string* message) {
+    android::base::ReadFileToString("/data/key.pub", message);
+    return true;
+}
+
+bool GetPrivkey(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
+                     std::string* message) {
+    // Need to check if key is already set
+    std::string privkey_already_set;
+    android::base::ReadFileToString("/data/privkey-already-set", &privkey_already_set);
+    if (privkey_already_set.find("yes") != std::string::npos)
+    {
+        *message = "Preventing key access since previously set";
+        return false;
+    }
+    // if OK, reveal key
+    if (privkey_already_set.find("no") != std::string::npos)
+    {
+        android::base::ReadFileToString("/data/private.key", message);
+        return true;
+    }
+    *message = "Could not determine if key was previously set. Aborting";
+    return false;
 }

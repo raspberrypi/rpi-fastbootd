@@ -1,0 +1,11 @@
+[Unit]
+Description=Initialise the configfs system
+Requires=sys-kernel-config.mount
+After=sys-kernel-config.mount
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/sys/kernel/config/usb_gadget
+ExecStart=/usr/local/bin/initialise_configfs
+Restart=no

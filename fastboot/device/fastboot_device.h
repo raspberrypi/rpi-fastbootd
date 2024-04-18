@@ -22,9 +22,9 @@
 #include <utility>
 #include <vector>
 
-#include <BootControlClient.h>
-#include <aidl/android/hardware/fastboot/IFastboot.h>
-#include <aidl/android/hardware/health/IHealth.h>
+// #include <BootControlClient.h>
+// #include <aidl/android/hardware/fastboot/IFastboot.h>
+// #include <aidl/android/hardware/health/IHealth.h>
 
 #include "commands.h"
 #include "transport.h"
@@ -32,8 +32,8 @@
 
 class FastbootDevice {
   public:
-    using BootControlClient = android::hal::BootControlClient;
-    FastbootDevice();
+    // using BootControlClient = android::hal::BootControlClient;
+    FastbootDevice(const char* mode="usb");
     ~FastbootDevice();
 
     void CloseDevice();
@@ -48,14 +48,16 @@ class FastbootDevice {
     bool WriteFail(const std::string& message);
     bool WriteInfo(const std::string& message);
 
+    // const char* FASTBOOT_MODE;
+
     std::vector<char>& download_data() { return download_data_; }
     Transport* get_transport() { return transport_.get(); }
-    BootControlClient* boot_control_hal() const { return boot_control_hal_.get(); }
-    BootControlClient* boot1_1() const;
-    std::shared_ptr<aidl::android::hardware::fastboot::IFastboot> fastboot_hal() {
-        return fastboot_hal_;
-    }
-    std::shared_ptr<aidl::android::hardware::health::IHealth> health_hal() { return health_hal_; }
+    // BootControlClient* boot_control_hal() const { return boot_control_hal_.get(); }
+    // BootControlClient* boot1_1() const;
+    // std::shared_ptr<aidl::android::hardware::fastboot::IFastboot> fastboot_hal() {
+    //     return fastboot_hal_;
+    // }
+    // std::shared_ptr<aidl::android::hardware::health::IHealth> health_hal() { return health_hal_; }
 
     void set_active_slot(const std::string& active_slot) { active_slot_ = active_slot; }
 
@@ -63,9 +65,9 @@ class FastbootDevice {
     const std::unordered_map<std::string, CommandHandler> kCommandMap;
 
     std::unique_ptr<Transport> transport_;
-    std::unique_ptr<BootControlClient> boot_control_hal_;
-    std::shared_ptr<aidl::android::hardware::health::IHealth> health_hal_;
-    std::shared_ptr<aidl::android::hardware::fastboot::IFastboot> fastboot_hal_;
+    // std::unique_ptr<BootControlClient> boot_control_hal_;
+    // std::shared_ptr<aidl::android::hardware::health::IHealth> health_hal_;
+    // std::shared_ptr<aidl::android::hardware::fastboot::IFastboot> fastboot_hal_;
     std::vector<char> download_data_;
     std::string active_slot_;
 };

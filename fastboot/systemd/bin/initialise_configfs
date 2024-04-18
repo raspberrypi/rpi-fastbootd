@@ -1,0 +1,20 @@
+#!/bin/sh
+
+mkdir -p fastboot
+cd fastboot
+echo 0x18d1 > idVendor  # Google
+echo 0x4e40 > idProduct # Nexus 7 (Fastboot)
+echo 0x0100 > bcdDevice # v1.0.0
+echo 0x0200 > bcdUSB    # USB2
+mkdir -p strings/0x409
+cat /proc/device-tree/serial-number             > strings/0x409/serialnumber
+echo "Raspberry Pi"                             > strings/0x409/manufacturer
+cat "/sys/firmware/devicetree/base/model"       > strings/0x409/product
+
+mkdir -p configs/b.1
+echo 250 > configs/b.1/MaxPower
+mkdir -p configs/b.1/strings/0x409
+echo "fastboot" > configs/b.1/strings/0x409/configuration
+
+mkdir -p functions/ffs.fastboot
+ln -s functions/ffs.fastboot configs/b.1

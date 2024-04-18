@@ -1,0 +1,8 @@
+[Unit]
+Description=Fastboot /data tmpfs
+
+[Mount]
+What=tmpfs
+Where=/data
+Type=tmpfs
+Options=X-mount.mkdir

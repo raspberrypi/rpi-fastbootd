@@ -22,6 +22,8 @@
 
 #include "fastboot_device.h"
 
+auto mode = "usb";
+
 static void LogSparseVerboseMessage(const char* fmt, ...) {
     std::string message;
 
@@ -33,13 +35,22 @@ static void LogSparseVerboseMessage(const char* fmt, ...) {
     LOG(ERROR) << "libsparse message: " << message;
 }
 
-int main(int /*argc*/, char* argv[]) {
+int main(int argc, char* argv[]) {
     android::base::InitLogging(argv, &android::base::KernelLogger);
 
+    int i = 0;
+    while (i < argc) {
+        std::string argv_as_str = argv[i];
+        if (argv_as_str.find("-i") != std::string::npos) {
+            mode = argv[i + 1];
+        }
+        i ++;
+    }
     sparse_print_verbose = LogSparseVerboseMessage;
 
     while (true) {
-        FastbootDevice device;
+        FastbootDevice device(mode);
+        // device.FASTBOOT_MODE = mode;
         device.ExecuteCommands();
     }
 }
