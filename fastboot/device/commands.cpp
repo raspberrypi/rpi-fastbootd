@@ -502,11 +502,11 @@ namespace {
     // oem cryptinit <blkdev> <label>
     static bool oem_cmd_cryptinit(FastbootDevice* device, const std::vector<std::string>& args) {
         if (args.size() < 4) {
-            return device->WriteFail("Insufficient arguments. Usage: oem cryptinit <block_device> <label>");
+            return device->WriteFail("Insufficient arguments. Usage: oem cryptinit <block_device> <label> [cipher]");
         }
 
         if (args[2].empty()) {
-            return device->WriteFail("Block device not specified. Usage: oem cryptinit <block_device> <label>");
+            return device->WriteFail("Block device not specified. Usage: oem cryptinit <block_device> <label> [cipher]");
         }
 
         auto block_device = args[2];
@@ -522,14 +522,14 @@ namespace {
             return device->WriteFail("Cannot create context for device " + block_device + " as failed to open");
         }
 
+	std::string cipher = "--cipher=aes-xts-plain64";
+
+        if (args.size() >= 5)
+            cipher = "--cipher=" + args[4];
+
         char cryptsetup[]     = "cryptsetup";
         char batch_mode[]     = "--batch-mode";
         char luksFormat[]     = "luksFormat";
-        char type[]           = "--type=luks2";
-        char cipher[]         = "--cipher=aes-xts-plain64";
-        char hash[]           = "--hash=sha256";
-        char key_size[]       = "--key-size=256";
-        //char uuid[]           = "--uuid=63bdaa59-d1dd-4f15-8d0e-f64642275879";
         char label[]          = "--label";
         char force_password[] = "--force-password";
         char keyfile[]        = KEYFILE;
@@ -538,16 +538,12 @@ namespace {
             cryptsetup,
             batch_mode,
             luksFormat,
-            type,
-            cipher,
-            hash,
-            key_size,
-            //uuid,
+            const_cast<char *>(cipher.c_str()),
             label,
             const_cast<char *>(args[3].c_str()), //!< Inserted
             force_password,
-            keyfile,
             const_cast<char *>(block_device.c_str()), //!< Appended
+            keyfile,
             NULL
         };
 
