@@ -556,13 +556,13 @@ bool GetMaxFetchSize(FastbootDevice* /* device */, const std::vector<std::string
 }
 
 bool GetDmesg(FastbootDevice* device) {
-    if (GetDeviceLockStatus()) {
-        return device->WriteFail("Cannot use when device flashing is locked");
-    }
+    // if (GetDeviceLockStatus()) {
+    //    return device->WriteFail("Cannot use when device flashing is locked");
+    //}
 
-    std::unique_ptr<FILE, decltype(&::fclose)> fp(popen("/system/bin/dmesg", "re"), ::fclose);
+    std::unique_ptr<FILE, decltype(&::fclose)> fp(popen("/usr/bin/dmesg", "re"), ::fclose);
     if (!fp) {
-        PLOG(ERROR) << "popen /system/bin/dmesg";
+        PLOG(ERROR) << "popen /usr/bin/dmesg";
         return device->WriteFail("Unable to run dmesg: "s + strerror(errno));
     }
 
