@@ -11,26 +11,25 @@ printf "version = 0.4\r\n" > /data/fastboot.cfg
     printf "max-download-size = 0x10000000# 256MiB\r\n"
 } >> /data/fastboot.cfg
 
-## Generate the keys parts
-
+## Identify if a key has already been written
 if /usr/local/bin/rpi-otp-private-key -c; then
     printf "yes\r\n" >> /data/privkey-already-set
 else
     printf "no\r\n" >> /data/privkey-already-set
-    #Generate a key!
-    /usr/local/bin/rpi-otp-private-key -y -w "$(openssl genpkey -algorithm ed25519 -outform DER | dd bs=16 skip=1 count=2 2>/dev/null | xxd -c 128 -p | tr -d '\n')"
 fi
 
 # Use base64 encoded private key as LUKS passphrase
 PRIVATE_KEY=$(/usr/local/bin/rpi-otp-private-key -b | base64 -w0)
-printf "%s" "${PRIVATE_KEY}" > /data/fastboot.key
-printf "%s\r\n" "${PRIVATE_KEY}" >> /data/private.key
+if [ -n "${PRIVATE_KEY}" ]; then
+	printf "%s" "${PRIVATE_KEY}" > /data/fastboot.key
+	printf "%s\r\n" "${PRIVATE_KEY}" >> /data/private.key
 
-# Apply correct ed25519 DER header to generate compliant private key
-{
-    printf MC4CAQAwBQYDK2VwBCIEIA== | base64 -d -
-    base64 -d /data/fastboot.key
-} > /data/key.der
+	# Apply correct ed25519 DER header to generate compliant private key
+	{
+	    printf MC4CAQAwBQYDK2VwBCIEIA== | base64 -d -
+	    base64 -d /data/fastboot.key
+	} > /data/key.der
 
-# Generate public key
-printf "%s\r\n" "$(openssl pkey -in /data/key.der -inform DER -pubout | sed '/PUBLIC/d' | tr -d '\n')" >> /data/key.pub
+	# Generate public key
+	printf "%s\r\n" "$(openssl pkey -in /data/key.der -inform DER -pubout | sed '/PUBLIC/d' | tr -d '\n')" >> /data/key.pub
+fi
