@@ -83,5 +83,3 @@
 #define FB_VAR_DMESG "dmesg"
 #define FB_VAR_PUBKEY "public-key"
 #define FB_VAR_PRIVKEY "private-key"
-#define FB_VAR_IPV4_ADDRESS "ipv4-address"
-#define FB_VAR_IPV6_ADDRESS "ipv6-address"
