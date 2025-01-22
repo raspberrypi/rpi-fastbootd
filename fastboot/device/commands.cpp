@@ -158,7 +158,6 @@ const std::unordered_map<std::string, VariableHandlers> kVariableMap = {
         // {FB_VAR_TREBLE_ENABLED, {GetTrebleEnabled, nullptr}},
         {FB_VAR_MAX_FETCH_SIZE, {GetMaxFetchSize, nullptr}},
         {FB_VAR_PUBKEY, {GetPubkey, nullptr}},
-        {FB_VAR_PRIVKEY, {GetPrivkey, nullptr}},
 };
 
 static bool GetVarAll(FastbootDevice* device) {
@@ -179,6 +178,7 @@ static void PostWipeData() {
 const std::unordered_map<std::string, std::function<bool(FastbootDevice*)>> kSpecialVars = {
         {"all", GetVarAll},
         {"dmesg", GetDmesg},
+        {FB_VAR_PRIVKEY, GetPrivkey},
 };
 
 bool GetVarHandler(FastbootDevice* device, const std::vector<std::string>& args) {
