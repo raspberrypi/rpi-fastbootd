@@ -607,9 +607,9 @@ bool GetPrivkey(FastbootDevice* device) {
     {
         // Create the key, write to OTP
         {
-            std::unique_ptr<FILE, decltype(&::pclose)> fp(popen("/usr/bin/generate-device-key", "re"), ::pclose);
+            std::unique_ptr<FILE, decltype(&::pclose)> fp(popen("/usr/local/bin/generate-device-key", "re"), ::pclose);
             if (!fp) {
-                PLOG(ERROR) << "popen /usr/bin/generate-device-key";
+                PLOG(ERROR) << "popen /usr/local/bin/generate-device-key";
                 return device->WriteFail("Unable to generate device key: "s + strerror(errno));
             }
             
