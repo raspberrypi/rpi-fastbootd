@@ -14,7 +14,7 @@ printf "version = 0.4\r\n" > /data/fastboot.cfg
 ## Identify if a key has already been written
 if /usr/local/bin/rpi-otp-private-key -c; then
     printf "yes\r\n" >> /data/privkey-already-set
-	/usr/local/bin/read_device_keys
+    /usr/local/bin/read_device_keys
 else
     printf "no\r\n" >> /data/privkey-already-set
 fi
