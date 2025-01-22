@@ -612,6 +612,25 @@ bool GetPrivkey(FastbootDevice* device) {
                 PLOG(ERROR) << "popen /usr/bin/generate-device-key";
                 return device->WriteFail("Unable to generate device key: "s + strerror(errno));
             }
+            
+            ssize_t rv;
+            size_t n = 0;
+            char* str = nullptr;
+            while ((rv = ::getline(&str, &n, fp.get())) > 0) {
+                if (str[rv - 1] == '\n') {
+                    rv--;
+                }
+                device->WriteInfo(std::string(str, rv));
+            }
+
+            int saved_errno = errno;
+            ::free(str);
+
+            if (rv < 0 && saved_errno) {
+                LOG(ERROR) << "generate-device-key getline: " << strerror(saved_errno);
+                return device->WriteFail("generate-device-key failed: "s + strerror(saved_errno));;
+            }
+
         }
         std::string message;
         android::base::ReadFileToString("/data/private.key", &message);
