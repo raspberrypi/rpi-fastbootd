@@ -11,7 +11,7 @@ set(CPACK_PACKAGE_VENDOR "Raspberry Pi Ltd")
 # This value will be cached by cmake, a clean re-configure will be required to
 # adopt new values
 execute_process(
-	COMMAND git rev-list --count 92c7a77c18..HEAD
+	COMMAND git rev-list --count 2bdf18c51^..HEAD
 	WORKING_DIRECTORY ${CMAKE_CURRENT_LIST_DIR}
 	OUTPUT_VARIABLE CPACK_DEBIAN_PACKAGE_RELEASE
 	OUTPUT_STRIP_TRAILING_WHITESPACE

@@ -131,9 +131,14 @@ fi
 if [ $(((0x$BOARD_INFO >> 23) & 1)) = 0 ]; then
     die "Chip not supported"
 fi
-if [ $(((0x$BOARD_INFO >> 12) & 15)) = 3 ]; then
+if [ $(((0x$BOARD_INFO >> 12) & 15)) = 2 ]; then
+    # BCM2837
+    MAX_ROW_COUNT=8
+elif [ $(((0x$BOARD_INFO >> 12) & 15)) = 3 ]; then
+    # BCM2711
     MAX_ROW_COUNT=8
 elif [ $(((0x$BOARD_INFO >> 12) & 15)) = 4 ]; then
+    # BCM2712
     MAX_ROW_COUNT=16
 else
     die "Chip not supported"
