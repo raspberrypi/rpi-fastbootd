@@ -7,7 +7,12 @@ echo 0x4e40 > idProduct # Nexus 7 (Fastboot)
 echo 0x0100 > bcdDevice # v1.0.0
 echo 0x0200 > bcdUSB    # USB2
 mkdir -p strings/0x409
-cat /proc/device-tree/serial-number             > strings/0x409/serialnumber
+if [ -f /proc/device-tree/chosen/rpi-serial64 ]
+then
+    cat /proc/device-tree/chosen/rpi-serial64   > strings/0x409/serialnumber
+else
+    cat /proc/device-tree/serial-number         > strings/0x409/serialnumber
+fi
 echo "Raspberry Pi"                             > strings/0x409/manufacturer
 cat "/sys/firmware/devicetree/base/model"       > strings/0x409/product
 
