@@ -556,13 +556,13 @@ bool GetMaxFetchSize(FastbootDevice* /* device */, const std::vector<std::string
 }
 
 bool GetDmesg(FastbootDevice* device) {
-    if (GetDeviceLockStatus()) {
-        return device->WriteFail("Cannot use when device flashing is locked");
-    }
+    // if (GetDeviceLockStatus()) {
+    //    return device->WriteFail("Cannot use when device flashing is locked");
+    //}
 
-    std::unique_ptr<FILE, decltype(&::fclose)> fp(popen("/system/bin/dmesg", "re"), ::fclose);
+    std::unique_ptr<FILE, decltype(&::pclose)> fp(popen("/usr/bin/dmesg", "re"), ::pclose);
     if (!fp) {
-        PLOG(ERROR) << "popen /system/bin/dmesg";
+        PLOG(ERROR) << "popen /usr/bin/dmesg";
         return device->WriteFail("Unable to run dmesg: "s + strerror(errno));
     }
 
@@ -594,22 +594,47 @@ bool GetPubkey(FastbootDevice* /* device */, const std::vector<std::string>& /* 
     return true;
 }
 
-bool GetPrivkey(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
-                     std::string* message) {
+bool GetPrivkey(FastbootDevice* device) {
     // Need to check if key is already set
     std::string privkey_already_set;
     android::base::ReadFileToString("/data/privkey-already-set", &privkey_already_set);
     if (privkey_already_set.find("yes") != std::string::npos)
     {
-        *message = "Preventing key access since previously set";
-        return false;
+        return device->WriteFail("Preventing key access since previously set");
     }
     // if OK, reveal key
     if (privkey_already_set.find("no") != std::string::npos)
     {
-        android::base::ReadFileToString("/data/private.key", message);
-        return true;
+        // Create the key, write to OTP
+        {
+            std::unique_ptr<FILE, decltype(&::pclose)> fp(popen("/usr/local/bin/generate-device-key", "re"), ::pclose);
+            if (!fp) {
+                PLOG(ERROR) << "popen /usr/local/bin/generate-device-key";
+                return device->WriteFail("Unable to generate device key: "s + strerror(errno));
+            }
+            
+            ssize_t rv;
+            size_t n = 0;
+            char* str = nullptr;
+            while ((rv = ::getline(&str, &n, fp.get())) > 0) {
+                if (str[rv - 1] == '\n') {
+                    rv--;
+                }
+                device->WriteInfo(std::string(str, rv));
+            }
+
+            int saved_errno = errno;
+            ::free(str);
+
+            if (rv < 0 && saved_errno) {
+                LOG(ERROR) << "generate-device-key getline: " << strerror(saved_errno);
+                return device->WriteFail("generate-device-key failed: "s + strerror(saved_errno));;
+            }
+
+        }
+        std::string message;
+        android::base::ReadFileToString("/data/private.key", &message);
+        return device->WriteOkay(message);
     }
-    *message = "Could not determine if key was previously set. Aborting";
-    return false;
+    return device->WriteFail("Could not determine if key was previously set. Aborting");
 }
