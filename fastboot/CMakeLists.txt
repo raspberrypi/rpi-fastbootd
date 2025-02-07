@@ -37,7 +37,6 @@ endmacro()
 
 check_header_fatal(android-base/logging.h android-libbase-dev)
 check_header_fatal(cutils/sockets.h android-libcutils-dev)
-check_header_fatal(sparse/sparse.h android-libsparse-dev)
 
 add_executable(fastbootd ${SOURCES})
 target_compile_definitions(fastbootd PRIVATE ${COMMON_CPPFLAGS})
@@ -58,7 +57,7 @@ target_include_directories(fastbootd PRIVATE
 
 target_link_directories(fastbootd PRIVATE "/usr/lib/aarch64-linux-gnu/android")
 target_link_libraries(fastbootd PRIVATE 
-    sparse
+    libsparse
     ${ZLIB_LIBRARIES}
     ${FDISK_LIBRARIES}
     ${URING_LIBRARIES}
