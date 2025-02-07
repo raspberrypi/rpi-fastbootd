@@ -90,8 +90,7 @@ bool GetDmesg(FastbootDevice* device);
 
 bool GetPubkey(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
                      std::string* message);
-bool GetPrivkey(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
-                     std::string* message);
+bool GetPrivkey(FastbootDevice* /* device */);
 
 // Helpers for getvar all.
 std::vector<std::vector<std::string>> GetAllPartitionArgsWithSlot(FastbootDevice* device);
