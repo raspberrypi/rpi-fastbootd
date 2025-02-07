@@ -5,7 +5,12 @@ set -e
 printf "version = 0.4\r\n" > /data/fastboot.cfg
 {
     printf "product = %s\r\n" "$(cat /sys/firmware/devicetree/base/model)"
-    printf "serialno = %s\r\n" "$(cat /proc/device-tree/serial-number)"
+    if [ -f /proc/device-tree/chosen/rpi-serial64 ]
+    then
+        printf "serialno = %s\r\n" "$(cat /proc/device-tree/chosen/rpi-serial64)"
+    else
+        printf "serialno = %s\r\n" "$(cat /proc/device-tree/serial-number)"
+    fi
     printf "is-userspace = yes\r\n"
     printf "device-directory = /dev/# DANGEROUS\r\n"
     printf "max-download-size = 0x10000000# 256MiB\r\n"
