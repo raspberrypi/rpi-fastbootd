@@ -149,7 +149,9 @@ static struct SsFuncDesc ss_descriptors = {
                 },
 };
 
+#ifndef STR_INTERFACE_
 #define STR_INTERFACE_ "fastbootd"
+#endif
 
 static const struct {
     struct usb_functionfs_strings_head header;
