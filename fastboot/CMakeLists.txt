@@ -1,5 +1,7 @@
+set(FASTBOOTD_INTERFACE_DESCRIPTOR "fastbootd-provisioner" CACHE STRING "Interface descriptor for fastbootd")
 set(COMMON_CPPFLAGS
     -D_GNU_SOURCE
+    -DSTR_INTERFACE_="${FASTBOOTD_INTERFACE_DESCRIPTOR}"
 )
 
 set(SOURCES
