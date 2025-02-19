@@ -85,6 +85,37 @@ bool GetTrebleEnabled(FastbootDevice* device, const std::vector<std::string>& ar
 bool GetMaxFetchSize(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
                      std::string* message);
 
+bool GetRpiDuid(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
+                    std::string* message);
+bool GetRevisionProcessor(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
+    std::string* message);
+bool GetRevisionMemory(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
+    std::string* message);
+bool GetRevisionManufacturer(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
+    std::string* message);
+bool GetRevisionType(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
+    std::string* message);
+bool GetRevisionRevision(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
+    std::string* message);
+bool GetMacEthernet(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
+    std::string* message);
+bool GetMacWifi(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
+    std::string* message);
+bool GetMacBt(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
+    std::string* message);
+bool GetMmcSectorSize(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
+    std::string* message);
+bool GetMmcSectorCount(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
+    std::string* message);
+bool GetMmcCid(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
+    std::string* message);
+bool GetSignedEeprom(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
+    std::string* message);
+bool GetSignedDevkey(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
+    std::string* message);
+bool GetSignedOtp(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
+    std::string* message);
+
 // Complex cases.
 bool GetDmesg(FastbootDevice* device);
 
