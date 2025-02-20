@@ -107,23 +107,39 @@ bool GetRpiDuid(FastbootDevice * /* device */, const std::vector<std::string> & 
 bool GetRevisionProcessor(FastbootDevice * /* device */, const std::vector<std::string> & /* args */,
                           std::string *message)
 {
-    std::string revision;
-    android::base::ReadFileToString("/proc/cpuinfo", &revision);
-
-    size_t pos = revision.find("Revision");
-    if (pos != std::string::npos)
+    std::string otp_dump;
     {
-        std::string rev_str = revision.substr(pos);
-        unsigned int rev_val;
-        if (sscanf(rev_str.c_str(), "Revision : %x", &rev_val) == 1)
-        {
-            // unsigned int memory_size = (rev_val >> 20) & 0x7;
-            // unsigned int manufacturer = (rev_val >> 16) & 0xF;
-            unsigned int processor = (rev_val >> 12) & 0xF;
-            // unsigned int type = (rev_val >> 4) & 0xFF;
-            // unsigned int rev = rev_val & 0xF;
+        posix_spawn_file_actions_t action;
+        posix_spawn_file_actions_init(&action);
+        posix_spawn_file_actions_addopen(&action, STDOUT_FILENO, "/tmp/otp.log", O_WRONLY|O_CREAT, 0644);
 
-            *message = android::base::StringPrintf("0x%X", processor);
+        pid_t pid;
+        char *arg[] = {"/usr/bin/vcgencmd", "otp_dump", NULL};
+        int status;
+        int ret = posix_spawnp(&pid, "/usr/bin/vcgencmd", &action, NULL, arg, NULL);
+
+        if (ret == 0) {
+            do {
+                ret = waitpid(pid, &status, 0);
+            } while (ret == -1 && errno == EINTR);
+            posix_spawn_file_actions_destroy(&action);
+            android::base::ReadFileToString("/tmp/otp.log", &otp_dump);
+        }
+    }
+
+    std::istringstream stream(otp_dump);
+    std::string line;
+    while (std::getline(stream, line)) {
+        size_t pos = line.find(':');
+        if (pos != std::string::npos) {
+            std::string key = line.substr(0, pos);
+            std::string value = line.substr(pos + 1);
+
+            if (key == "32") {
+                uint32_t value_int = std::stoul(value, 0, 16);
+
+                *message = android::base::StringPrintf("0x%X", (value_int & 0xF000) >> 12);
+            }
         }
     }
     return true;
@@ -132,23 +148,39 @@ bool GetRevisionProcessor(FastbootDevice * /* device */, const std::vector<std::
 bool GetRevisionManufacturer(FastbootDevice * /* device */, const std::vector<std::string> & /* args */,
                              std::string *message)
 {
-    std::string revision;
-    android::base::ReadFileToString("/proc/cpuinfo", &revision);
-
-    size_t pos = revision.find("Revision");
-    if (pos != std::string::npos)
+    std::string otp_dump;
     {
-        std::string rev_str = revision.substr(pos);
-        unsigned int rev_val;
-        if (sscanf(rev_str.c_str(), "Revision : %x", &rev_val) == 1)
-        {
-            // unsigned int memory_size = (rev_val >> 20) & 0x7;
-            unsigned int manufacturer = (rev_val >> 16) & 0xF;
-            // unsigned int processor = (rev_val >> 12) & 0xF;
-            // unsigned int type = (rev_val >> 4) & 0xFF;
-            // unsigned int rev = rev_val & 0xF;
+        posix_spawn_file_actions_t action;
+        posix_spawn_file_actions_init(&action);
+        posix_spawn_file_actions_addopen(&action, STDOUT_FILENO, "/tmp/otp.log", O_WRONLY|O_CREAT, 0644);
 
-            *message = android::base::StringPrintf("0x%X", manufacturer);
+        pid_t pid;
+        char *arg[] = {"/usr/bin/vcgencmd", "otp_dump", NULL};
+        int status;
+        int ret = posix_spawnp(&pid, "/usr/bin/vcgencmd", &action, NULL, arg, NULL);
+
+        if (ret == 0) {
+            do {
+                ret = waitpid(pid, &status, 0);
+            } while (ret == -1 && errno == EINTR);
+            posix_spawn_file_actions_destroy(&action);
+            android::base::ReadFileToString("/tmp/otp.log", &otp_dump);
+        }
+    }
+
+    std::istringstream stream(otp_dump);
+    std::string line;
+    while (std::getline(stream, line)) {
+        size_t pos = line.find(':');
+        if (pos != std::string::npos) {
+            std::string key = line.substr(0, pos);
+            std::string value = line.substr(pos + 1);
+
+            if (key == "32") {
+                uint32_t value_int = std::stoul(value, 0, 16);
+
+                *message = android::base::StringPrintf("0x%X", (value_int & 0xF0000) >> 16);
+            }
         }
     }
     return true;
@@ -157,23 +189,39 @@ bool GetRevisionManufacturer(FastbootDevice * /* device */, const std::vector<st
 bool GetRevisionMemory(FastbootDevice * /* device */, const std::vector<std::string> & /* args */,
                        std::string *message)
 {
-    std::string revision;
-    android::base::ReadFileToString("/proc/cpuinfo", &revision);
-
-    size_t pos = revision.find("Revision");
-    if (pos != std::string::npos)
+    std::string otp_dump;
     {
-        std::string rev_str = revision.substr(pos);
-        unsigned int rev_val;
-        if (sscanf(rev_str.c_str(), "Revision : %x", &rev_val) == 1)
-        {
-            unsigned int memory_size = (rev_val >> 20) & 0x7;
-            // unsigned int manufacturer = (rev_val >> 16) & 0xF;
-            // unsigned int processor = (rev_val >> 12) & 0xF;
-            // unsigned int type = (rev_val >> 4) & 0xFF;
-            // unsigned int rev = rev_val & 0xF;
+        posix_spawn_file_actions_t action;
+        posix_spawn_file_actions_init(&action);
+        posix_spawn_file_actions_addopen(&action, STDOUT_FILENO, "/tmp/otp.log", O_WRONLY|O_CREAT, 0644);
 
-            *message = android::base::StringPrintf("0x%X", memory_size);
+        pid_t pid;
+        char *arg[] = {"/usr/bin/vcgencmd", "otp_dump", NULL};
+        int status;
+        int ret = posix_spawnp(&pid, "/usr/bin/vcgencmd", &action, NULL, arg, NULL);
+
+        if (ret == 0) {
+            do {
+                ret = waitpid(pid, &status, 0);
+            } while (ret == -1 && errno == EINTR);
+            posix_spawn_file_actions_destroy(&action);
+            android::base::ReadFileToString("/tmp/otp.log", &otp_dump);
+        }
+    }
+
+    std::istringstream stream(otp_dump);
+    std::string line;
+    while (std::getline(stream, line)) {
+        size_t pos = line.find(':');
+        if (pos != std::string::npos) {
+            std::string key = line.substr(0, pos);
+            std::string value = line.substr(pos + 1);
+
+            if (key == "32") {
+                uint32_t value_int = std::stoul(value, 0, 16);
+
+                *message = android::base::StringPrintf("0x%X", (value_int & 0x700000) >> 20);
+            }
         }
     }
     return true;
@@ -182,23 +230,39 @@ bool GetRevisionMemory(FastbootDevice * /* device */, const std::vector<std::str
 bool GetRevisionType(FastbootDevice * /* device */, const std::vector<std::string> & /* args */,
                      std::string *message)
 {
-    std::string revision;
-    android::base::ReadFileToString("/proc/cpuinfo", &revision);
-
-    size_t pos = revision.find("Revision");
-    if (pos != std::string::npos)
+    std::string otp_dump;
     {
-        std::string rev_str = revision.substr(pos);
-        unsigned int rev_val;
-        if (sscanf(rev_str.c_str(), "Revision : %x", &rev_val) == 1)
-        {
-            // unsigned int memory_size = (rev_val >> 20) & 0x7;
-            // unsigned int manufacturer = (rev_val >> 16) & 0xF;
-            // unsigned int processor = (rev_val >> 12) & 0xF;
-            unsigned int type = (rev_val >> 4) & 0xFF;
-            // unsigned int rev = rev_val & 0xF;
+        posix_spawn_file_actions_t action;
+        posix_spawn_file_actions_init(&action);
+        posix_spawn_file_actions_addopen(&action, STDOUT_FILENO, "/tmp/otp.log", O_WRONLY|O_CREAT, 0644);
 
-            *message = android::base::StringPrintf("0x%X", type);
+        pid_t pid;
+        char *arg[] = {"/usr/bin/vcgencmd", "otp_dump", NULL};
+        int status;
+        int ret = posix_spawnp(&pid, "/usr/bin/vcgencmd", &action, NULL, arg, NULL);
+
+        if (ret == 0) {
+            do {
+                ret = waitpid(pid, &status, 0);
+            } while (ret == -1 && errno == EINTR);
+            posix_spawn_file_actions_destroy(&action);
+            android::base::ReadFileToString("/tmp/otp.log", &otp_dump);
+        }
+    }
+
+    std::istringstream stream(otp_dump);
+    std::string line;
+    while (std::getline(stream, line)) {
+        size_t pos = line.find(':');
+        if (pos != std::string::npos) {
+            std::string key = line.substr(0, pos);
+            std::string value = line.substr(pos + 1);
+
+            if (key == "32") {
+                uint32_t value_int = std::stoul(value, 0, 16);
+
+                *message = android::base::StringPrintf("0x%X", (value_int & 0x0FF0) >> 4);
+            }
         }
     }
     return true;
@@ -207,23 +271,39 @@ bool GetRevisionType(FastbootDevice * /* device */, const std::vector<std::strin
 bool GetRevisionRevision(FastbootDevice * /* device */, const std::vector<std::string> & /* args */,
                          std::string *message)
 {
-    std::string revision;
-    android::base::ReadFileToString("/proc/cpuinfo", &revision);
-
-    size_t pos = revision.find("Revision");
-    if (pos != std::string::npos)
+    std::string otp_dump;
     {
-        std::string rev_str = revision.substr(pos);
-        unsigned int rev_val;
-        if (sscanf(rev_str.c_str(), "Revision : %x", &rev_val) == 1)
-        {
-            // unsigned int memory_size = (rev_val >> 20) & 0x7;
-            // unsigned int manufacturer = (rev_val >> 16) & 0xF;
-            // unsigned int processor = (rev_val >> 12) & 0xF;
-            // unsigned int type = (rev_val >> 4) & 0xFF;
-            unsigned int rev = rev_val & 0xF;
+        posix_spawn_file_actions_t action;
+        posix_spawn_file_actions_init(&action);
+        posix_spawn_file_actions_addopen(&action, STDOUT_FILENO, "/tmp/otp.log", O_WRONLY|O_CREAT, 0644);
 
-            *message = android::base::StringPrintf("0x%X", rev);
+        pid_t pid;
+        char *arg[] = {"/usr/bin/vcgencmd", "otp_dump", NULL};
+        int status;
+        int ret = posix_spawnp(&pid, "/usr/bin/vcgencmd", &action, NULL, arg, NULL);
+
+        if (ret == 0) {
+            do {
+                ret = waitpid(pid, &status, 0);
+            } while (ret == -1 && errno == EINTR);
+            posix_spawn_file_actions_destroy(&action);
+            android::base::ReadFileToString("/tmp/otp.log", &otp_dump);
+        }
+    }
+
+    std::istringstream stream(otp_dump);
+    std::string line;
+    while (std::getline(stream, line)) {
+        size_t pos = line.find(':');
+        if (pos != std::string::npos) {
+            std::string key = line.substr(0, pos);
+            std::string value = line.substr(pos + 1);
+
+            if (key == "32") {
+                uint32_t value_int = std::stoul(value, 0, 16);
+
+                *message = android::base::StringPrintf("0x%X", (value_int & 0x0F));
+            }
         }
     }
     return true;
