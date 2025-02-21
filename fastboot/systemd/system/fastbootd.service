@@ -9,7 +9,7 @@ Before=fastboot-udc-attach.service
 [Service]
 Type=notify
 NotifyAccess=all
-ExecStartPre=/usr/local/bin/generate_fastboot_cfg
+ExecStartPre=/usr/local/bin/generate_keys
 ExecStart=/usr/local/bin/run_fastboot
 Restart=no
 

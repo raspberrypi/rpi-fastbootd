@@ -1,5 +1,16 @@
 #!/bin/sh
 
+set -e
+
+## Generate the keys parts
+if /usr/local/bin/rpi-otp-private-key -c; then
+    printf "yes\r\n" >> /data/privkey-already-set
+else
+    printf "no\r\n" >> /data/privkey-already-set
+    # Generate a key!
+    /usr/local/bin/rpi-otp-private-key -y -w "$(openssl genpkey -algorithm ed25519 -outform DER | dd bs=16 skip=1 count=2 2>/dev/null | xxd -c 128 -p | tr -d '\n')"
+fi
+
 # Use base64 encoded private key as LUKS passphrase
 PRIVATE_KEY=$(/usr/local/bin/rpi-otp-private-key -b | base64 -w0)
 if [ -n "${PRIVATE_KEY}" ]; then
