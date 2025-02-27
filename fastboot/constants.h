@@ -83,3 +83,23 @@
 #define FB_VAR_DMESG "dmesg"
 #define FB_VAR_PUBKEY "public-key"
 #define FB_VAR_PRIVKEY "private-key"
+#define FB_VAR_REV_MEMORY "revision-memory"
+#define FB_VAR_REV_MANUFACTURER "revision-manufacturer"
+#define FB_VAR_REV_PROCESSOR "revision-processor"
+#define FB_VAR_REV_TYPE "revision-type"
+#define FB_VAR_REV_REVISION "revision-revision"
+
+#define FB_VAR_MAC_ETHERNET "mac-ethernet"
+#define FB_VAR_MAC_WIFI "mac-wifi"
+#define FB_VAR_MAC_BT "mac-bt"
+
+#define FB_VAR_RPI_DUID "rpi-duid"
+
+#define FB_VAR_MMC_SECTOR_SIZE "mmc-sector-size"
+#define FB_VAR_MMC_SECTOR_COUNT "mmc-sector-count"
+#define FB_VAR_MMC_TOTAL_SIZE "mmc-total-size"
+#define FB_VAR_MMC_CID "mmc-cid"
+
+#define FB_VAR_SIGNED_EEPROM "secure-eeprom"
+#define FB_VAR_SIGNED_OTP "secure-otp"
+#define FB_VAR_SIGNED_DEVKEY "secure-devkey"

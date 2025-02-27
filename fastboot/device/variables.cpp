@@ -58,7 +58,7 @@ bool GetVersion(FastbootDevice* /* device */, const std::vector<std::string>& /*
 
 bool GetBootloaderVersion(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
                           std::string* message) {
-    *message = android::base::GetProperty("ro.bootloader", "");
+    android::base::ReadFileToString("/proc/device-tree/chosen/bootloader/version", message);
     return true;
 }
 
@@ -88,7 +88,364 @@ bool GetProduct(FastbootDevice* /* device */, const std::vector<std::string>& /*
 
 bool GetSerial(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
                std::string* message) {
-    android::base::ReadFileToString("/proc/device-tree/serial-number", message);
+    std::string serial;
+    if (android::base::ReadFileToString("/proc/device-tree/chosen/rpi-serial64", &serial)) {
+        *message = serial;
+    } else if (android::base::ReadFileToString("/proc/device-tree/serial-number", &serial)) {
+        *message = serial;
+    }
+    return true;
+}
+
+bool GetRpiDuid(FastbootDevice * /* device */, const std::vector<std::string> & /* args */,
+                std::string *message)
+{
+    android::base::ReadFileToString("/proc/device-tree/chosen/rpi-duid", message);
+    return true;
+}
+
+bool GetRevisionProcessor(FastbootDevice * /* device */, const std::vector<std::string> & /* args */,
+                          std::string *message)
+{
+    std::string revision;
+    android::base::ReadFileToString("/proc/cpuinfo", &revision);
+
+    size_t pos = revision.find("Revision");
+    if (pos != std::string::npos)
+    {
+        std::string rev_str = revision.substr(pos);
+        unsigned int rev_val;
+        if (sscanf(rev_str.c_str(), "Revision : %x", &rev_val) == 1)
+        {
+            // unsigned int memory_size = (rev_val >> 20) & 0x7;
+            // unsigned int manufacturer = (rev_val >> 16) & 0xF;
+            unsigned int processor = (rev_val >> 12) & 0xF;
+            // unsigned int type = (rev_val >> 4) & 0xFF;
+            // unsigned int rev = rev_val & 0xF;
+
+            *message = android::base::StringPrintf("0x%X", processor);
+        }
+    }
+    return true;
+}
+
+bool GetRevisionManufacturer(FastbootDevice * /* device */, const std::vector<std::string> & /* args */,
+                             std::string *message)
+{
+    std::string revision;
+    android::base::ReadFileToString("/proc/cpuinfo", &revision);
+
+    size_t pos = revision.find("Revision");
+    if (pos != std::string::npos)
+    {
+        std::string rev_str = revision.substr(pos);
+        unsigned int rev_val;
+        if (sscanf(rev_str.c_str(), "Revision : %x", &rev_val) == 1)
+        {
+            // unsigned int memory_size = (rev_val >> 20) & 0x7;
+            unsigned int manufacturer = (rev_val >> 16) & 0xF;
+            // unsigned int processor = (rev_val >> 12) & 0xF;
+            // unsigned int type = (rev_val >> 4) & 0xFF;
+            // unsigned int rev = rev_val & 0xF;
+
+            *message = android::base::StringPrintf("0x%X", manufacturer);
+        }
+    }
+    return true;
+}
+
+bool GetRevisionMemory(FastbootDevice * /* device */, const std::vector<std::string> & /* args */,
+                       std::string *message)
+{
+    std::string revision;
+    android::base::ReadFileToString("/proc/cpuinfo", &revision);
+
+    size_t pos = revision.find("Revision");
+    if (pos != std::string::npos)
+    {
+        std::string rev_str = revision.substr(pos);
+        unsigned int rev_val;
+        if (sscanf(rev_str.c_str(), "Revision : %x", &rev_val) == 1)
+        {
+            unsigned int memory_size = (rev_val >> 20) & 0x7;
+            // unsigned int manufacturer = (rev_val >> 16) & 0xF;
+            // unsigned int processor = (rev_val >> 12) & 0xF;
+            // unsigned int type = (rev_val >> 4) & 0xFF;
+            // unsigned int rev = rev_val & 0xF;
+
+            *message = android::base::StringPrintf("0x%X", memory_size);
+        }
+    }
+    return true;
+}
+
+bool GetRevisionType(FastbootDevice * /* device */, const std::vector<std::string> & /* args */,
+                     std::string *message)
+{
+    std::string revision;
+    android::base::ReadFileToString("/proc/cpuinfo", &revision);
+
+    size_t pos = revision.find("Revision");
+    if (pos != std::string::npos)
+    {
+        std::string rev_str = revision.substr(pos);
+        unsigned int rev_val;
+        if (sscanf(rev_str.c_str(), "Revision : %x", &rev_val) == 1)
+        {
+            // unsigned int memory_size = (rev_val >> 20) & 0x7;
+            // unsigned int manufacturer = (rev_val >> 16) & 0xF;
+            // unsigned int processor = (rev_val >> 12) & 0xF;
+            unsigned int type = (rev_val >> 4) & 0xFF;
+            // unsigned int rev = rev_val & 0xF;
+
+            *message = android::base::StringPrintf("0x%X", type);
+        }
+    }
+    return true;
+}
+
+bool GetRevisionRevision(FastbootDevice * /* device */, const std::vector<std::string> & /* args */,
+                         std::string *message)
+{
+    std::string revision;
+    android::base::ReadFileToString("/proc/cpuinfo", &revision);
+
+    size_t pos = revision.find("Revision");
+    if (pos != std::string::npos)
+    {
+        std::string rev_str = revision.substr(pos);
+        unsigned int rev_val;
+        if (sscanf(rev_str.c_str(), "Revision : %x", &rev_val) == 1)
+        {
+            // unsigned int memory_size = (rev_val >> 20) & 0x7;
+            // unsigned int manufacturer = (rev_val >> 16) & 0xF;
+            // unsigned int processor = (rev_val >> 12) & 0xF;
+            // unsigned int type = (rev_val >> 4) & 0xFF;
+            unsigned int rev = rev_val & 0xF;
+
+            *message = android::base::StringPrintf("0x%X", rev);
+        }
+    }
+    return true;
+}
+
+bool GetMacEthernet(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
+                    std::string* message) {
+    std::string otp_dump;
+    {
+        posix_spawn_file_actions_t action;
+        posix_spawn_file_actions_init(&action);
+        posix_spawn_file_actions_addopen(&action, STDOUT_FILENO, "/tmp/otp.log", O_WRONLY|O_CREAT, 0644);
+
+        pid_t pid;
+        char *arg[] = {"/usr/bin/vcgencmd", "otp_dump", NULL};
+        int status;
+        int ret = posix_spawnp(&pid, "/usr/bin/vcgencmd", &action, NULL, arg, NULL);
+
+        if (ret == 0) {
+            do {
+                ret = waitpid(pid, &status, 0);
+            } while (ret == -1 && errno == EINTR);
+            posix_spawn_file_actions_destroy(&action);
+            android::base::ReadFileToString("/tmp/otp.log", &otp_dump);
+        }
+    }
+
+    std::string eth_mac_up, eth_mac_lo;
+    std::istringstream stream(otp_dump);
+    std::string line;
+    while (std::getline(stream, line)) {
+        size_t pos = line.find(':');
+        if (pos != std::string::npos) {
+            std::string key = line.substr(0, pos);
+            std::string value = line.substr(pos + 1);
+
+            if (key == "50") {
+                eth_mac_lo = value.substr(0, 4);
+                // Insert colons between pairs
+                for (size_t i = 2; i < eth_mac_lo.length(); i += 3) {
+                    eth_mac_lo.insert(i, ":");
+                }
+            } else if (key == "51") {
+                eth_mac_up = value;
+                for (size_t i = 2; i < eth_mac_up.length(); i += 3) {
+                    eth_mac_up.insert(i, ":");
+                }
+            }
+        }
+    }
+    *message = eth_mac_up + ":" + eth_mac_lo;
+    return true;
+}
+
+bool GetMacWifi(FastbootDevice * /* device */, const std::vector<std::string> & /* args */,
+                std::string *message)
+{
+    std::string otp_dump;
+    {
+        posix_spawn_file_actions_t action;
+        posix_spawn_file_actions_init(&action);
+        posix_spawn_file_actions_addopen(&action, STDOUT_FILENO, "/tmp/otp.log", O_WRONLY | O_CREAT, 0644);
+
+        pid_t pid;
+        char *arg[] = {"/usr/bin/vcgencmd", "otp_dump", NULL};
+        int status;
+        int ret = posix_spawnp(&pid, "/usr/bin/vcgencmd", &action, NULL, arg, NULL);
+
+        if (ret == 0)
+        {
+            do
+            {
+                ret = waitpid(pid, &status, 0);
+            } while (ret == -1 && errno == EINTR);
+            posix_spawn_file_actions_destroy(&action);
+            android::base::ReadFileToString("/tmp/otp.log", &otp_dump);
+        }
+    }
+
+    std::string wifi_mac_lo, wifi_mac_up;
+    std::istringstream stream(otp_dump);
+    std::string line;
+    while (std::getline(stream, line))
+    {
+        size_t pos = line.find(':');
+        if (pos != std::string::npos)
+        {
+            std::string key = line.substr(0, pos);
+            std::string value = line.substr(pos + 1);
+
+            if (key == "52") {
+                wifi_mac_lo = value.substr(0, 4);
+                for (size_t i = 2; i < wifi_mac_lo.length(); i += 3) {
+                    wifi_mac_lo.insert(i, ":");
+                }
+            } else if (key == "53") {
+                wifi_mac_up = value;
+                for (size_t i = 2; i < wifi_mac_up.length(); i += 3) {
+                    wifi_mac_up.insert(i, ":");
+                }
+            } 
+        }
+    }
+    *message = wifi_mac_up + ":" + wifi_mac_lo;
+    return true;
+}
+
+bool GetMacBt(FastbootDevice * /* device */, const std::vector<std::string> & /* args */,
+              std::string *message)
+{
+    std::string otp_dump;
+    {
+        posix_spawn_file_actions_t action;
+        posix_spawn_file_actions_init(&action);
+        posix_spawn_file_actions_addopen(&action, STDOUT_FILENO, "/tmp/otp.log", O_WRONLY | O_CREAT, 0644);
+
+        pid_t pid;
+        char *arg[] = {"/usr/bin/vcgencmd", "otp_dump", NULL};
+        int status;
+        int ret = posix_spawnp(&pid, "/usr/bin/vcgencmd", &action, NULL, arg, NULL);
+
+        if (ret == 0)
+        {
+            do
+            {
+                ret = waitpid(pid, &status, 0);
+            } while (ret == -1 && errno == EINTR);
+            posix_spawn_file_actions_destroy(&action);
+            android::base::ReadFileToString("/tmp/otp.log", &otp_dump);
+        }
+    }
+
+    std::string mac_hi, mac_lo;
+    std::istringstream stream(otp_dump);
+    std::string line;
+    while (std::getline(stream, line))
+    {
+        size_t pos = line.find(':');
+        if (pos != std::string::npos)
+        {
+            std::string key = line.substr(0, pos);
+            std::string value = line.substr(pos + 1);
+
+            if (key == "54")
+            {
+                mac_lo = value.substr(0, 4);
+                for (size_t i = 2; i < mac_lo.length(); i += 3)
+                {
+                    mac_lo.insert(i, ":");
+                }
+            }
+            else if (key == "55")
+            {
+                mac_hi = value;
+                for (size_t i = 2; i < mac_hi.length(); i += 3)
+                {
+                    mac_hi.insert(i, ":");
+                }
+            }
+        }
+    }
+    *message = mac_hi + ":" + mac_lo;
+    return true;
+}
+
+bool GetMmcCid(FastbootDevice * /* device */, const std::vector<std::string> & /* args */,
+               std::string *message)
+{
+    std::string cid;
+    android::base::ReadFileToString("/sys/block/mmcblk0/device/cid", &cid);
+    *message = cid;
+    return true;
+}
+
+bool GetMmcSectorSize(FastbootDevice * /* device */, const std::vector<std::string> & /* args */,
+                      std::string *message)
+{
+    std::string sector_size;
+    android::base::ReadFileToString("/sys/block/mmcblk0/queue/hw_sector_size", &sector_size);
+    *message = sector_size;
+    return true;
+}
+
+bool GetMmcSectorCount(FastbootDevice * /* device */, const std::vector<std::string> & /* args */,
+                       std::string *message)
+{
+    std::string total_sectors;
+    android::base::ReadFileToString("/sys/block/mmcblk0/size", &total_sectors);
+    *message = total_sectors;
+    return true;
+}
+
+bool GetSignedEeprom(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
+                           std::string* message) {
+    std::string signed_raw = {};
+    if (android::base::ReadFileToString("/proc/device-tree/chosen/bootloader/signed", &signed_raw)) {
+        *message = (std::stoi(signed_raw) & (1 << 0)) ? "present" : "not present";
+    } else {
+        *message = "not available";
+    }
+    return true;
+}
+
+bool GetSignedDevkey(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
+                         std::string* message) {
+    std::string signed_raw = {};
+    if (android::base::ReadFileToString("/proc/device-tree/chosen/bootloader/signed", &signed_raw)) {
+        *message = (std::stoi(signed_raw) & (1 << 2)) ? "present" : "not present";
+    } else {
+        *message = "not available";
+    }
+    return true;
+}
+
+bool GetSignedOtp(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
+                        std::string* message) {
+    std::string signed_raw = {};
+    if (android::base::ReadFileToString("/proc/device-tree/chosen/bootloader/signed", &signed_raw)) {
+        *message = (std::stoi(signed_raw) & (1 << 3)) ? "present" : "not present";
+    } else {
+        *message = "not available";
+    }
     return true;
 }
 
@@ -502,7 +859,17 @@ bool GetSnapshotUpdateStatus(FastbootDevice* device, const std::vector<std::stri
 
 bool GetCpuAbi(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
                std::string* message) {
-    *message = android::base::GetProperty("ro.product.cpu.abi", "");
+    #ifdef __aarch64__
+        *message = "arm64-v8a";
+    #elif defined(__arm__)
+        *message = "armeabi-v7a";
+    #elif defined(__x86_64__)
+        *message = "x86_64";
+    #elif defined(__i386__)
+        *message = "x86";
+    #else
+        *message = "unknown";
+    #endif
     return true;
 }
 

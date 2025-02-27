@@ -158,6 +158,21 @@ const std::unordered_map<std::string, VariableHandlers> kVariableMap = {
         // {FB_VAR_TREBLE_ENABLED, {GetTrebleEnabled, nullptr}},
         {FB_VAR_MAX_FETCH_SIZE, {GetMaxFetchSize, nullptr}},
         {FB_VAR_PUBKEY, {GetPubkey, nullptr}},
+        {FB_VAR_REV_MANUFACTURER, {GetRevisionManufacturer, nullptr}},
+        {FB_VAR_REV_MEMORY, {GetRevisionMemory, nullptr}},
+        {FB_VAR_REV_PROCESSOR, {GetRevisionProcessor, nullptr}},
+        {FB_VAR_REV_TYPE, {GetRevisionType, nullptr}},
+        {FB_VAR_REV_REVISION, {GetRevisionRevision, nullptr}},
+        {FB_VAR_MMC_SECTOR_SIZE, {GetMmcSectorSize, nullptr}},
+        {FB_VAR_MMC_SECTOR_COUNT, {GetMmcSectorCount, nullptr}},
+        {FB_VAR_MMC_CID, {GetMmcCid, nullptr}},
+        {FB_VAR_MAC_ETHERNET, {GetMacEthernet, nullptr}},
+        {FB_VAR_MAC_WIFI, {GetMacWifi, nullptr}},
+        {FB_VAR_MAC_BT, {GetMacBt, nullptr}},
+        {FB_VAR_RPI_DUID, {GetRpiDuid, nullptr}},
+        {FB_VAR_SIGNED_EEPROM, {GetSignedEeprom, nullptr}},
+        {FB_VAR_SIGNED_OTP, {GetSignedOtp, nullptr}},
+        {FB_VAR_SIGNED_DEVKEY, {GetSignedDevkey, nullptr}},
 };
 
 static bool GetVarAll(FastbootDevice* device) {
