@@ -1019,9 +1019,11 @@ bool GetDmesg(FastbootDevice* device) {
 
     posix_spawn_file_actions_destroy(&action);
     if (ret) {
-        return device->WriteFail(strerror(ret));
+        device->WriteFail(strerror(ret));
+        return false;
     } else if (subprocess_rc) {
-        return device->WriteFail("Dmesg failed");
+        device->WriteFail("Dmesg failed");
+        return false;
     } else {
         std::string dmesg_dump;
         android::base::ReadFileToString("/tmp/dmesg.log", &dmesg_dump);
@@ -1052,18 +1054,22 @@ bool GetPrivkey(FastbootDevice* device) {
     if (android::base::ReadFileToString("/data/privkey-already-set", &privkey_already_set)) {
         if (privkey_already_set.find("yes") != std::string::npos)
         {
-            return device->WriteFail("Preventing key access since previously set");
+            device->WriteFail("Preventing key access since previously set");
+            return false;
         }
         // if OK, reveal key
         if (privkey_already_set.find("no") != std::string::npos)
         {
             std::string message;
             if (android::base::ReadFileToString("/data/private.key", &message)) {
-                return device->WriteOkay(message);
+                device->WriteOkay(message);
+                return true;
             } else {
-                return device->WriteFail("Could not read private key");
+                device->WriteFail("Could not read private key");
+                return false;
             }
         }
     }
-    return device->WriteFail("Could not determine if key was previously set. Aborting");
+    device->WriteFail("Could not determine if key was previously set. Aborting");
+    return false;
 }
