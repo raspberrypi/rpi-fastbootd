@@ -1007,54 +1007,60 @@ bool GetDmesg(FastbootDevice* device) {
     //    return device->WriteFail("Cannot use when device flashing is locked");
     //}
 
-    std::unique_ptr<FILE, decltype(&::pclose)> fp(popen("/usr/bin/dmesg", "re"), ::pclose);
-    if (!fp) {
-        PLOG(ERROR) << "popen /usr/bin/dmesg";
-        return device->WriteFail("Unable to run dmesg: "s + strerror(errno));
-    }
+    char * const argv[] = {
+        " > /tmp/dmesg.log",
+        NULL
+    };
 
-    ssize_t rv;
-    size_t n = 0;
-    char* str = nullptr;
-    while ((rv = ::getline(&str, &n, fp.get())) > 0) {
-        if (str[rv - 1] == '\n') {
-            rv--;
+    int subprocess_rc = -1;
+    int ret = process_spawn_blocking(&subprocess_rc, "dmesg", argv, NULL);
+
+    if (ret) {
+        return device->WriteFail(strerror(ret));
+    } else if (subprocess_rc) {
+        return device->WriteFail("Dmesg failed");
+    } else {
+        std::string message = {};
+        if (android::base::ReadFileToString("/tmp/dmesg.log", &message)) {
+            return device->WriteInfo(message);
+        } else {
+            return device->WriteFail("Could not read dmesg");
         }
-        device->WriteInfo(std::string(str, rv));
+        return true;
     }
-
-    int saved_errno = errno;
-    ::free(str);
-
-    if (rv < 0 && saved_errno) {
-        LOG(ERROR) << "dmesg getline: " << strerror(saved_errno);
-        device->WriteFail("Unable to read dmesg: "s + strerror(saved_errno));
-        return false;
-    }
-
-    return true;
+    
 }
 
 bool GetPubkey(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
                      std::string* message) {
-    android::base::ReadFileToString("/data/key.pub", message);
-    return true;
+    std::string temporary = {};
+    if (android::base::ReadFileToString("/data/key.pub", &temporary)) {
+        *message->assign(temporary);
+        return true;
+    } else {
+        *message = "Could not read public key";
+        return false;
+    }
 }
 
 bool GetPrivkey(FastbootDevice* device) {
     // Need to check if key is already set
     std::string privkey_already_set;
-    android::base::ReadFileToString("/data/privkey-already-set", &privkey_already_set);
-    if (privkey_already_set.find("yes") != std::string::npos)
-    {
-        return device->WriteFail("Preventing key access since previously set");
-    }
-    // if OK, reveal key
-    if (privkey_already_set.find("no") != std::string::npos)
-    {
-        std::string message;
-        android::base::ReadFileToString("/data/private.key", &message);
-        return device->WriteOkay(message);
+    if (android::base::ReadFileToString("/data/privkey-already-set", &privkey_already_set)) {
+        if (privkey_already_set.find("yes") != std::string::npos)
+        {
+            return device->WriteFail("Preventing key access since previously set");
+        }
+        // if OK, reveal key
+        if (privkey_already_set.find("no") != std::string::npos)
+        {
+            std::string message;
+            if (android::base::ReadFileToString("/data/private.key", &message)) {
+                return device->WriteOkay(message);
+            } else {
+                return device->WriteFail("Could not read private key");
+            }
+        }
     }
     return device->WriteFail("Could not determine if key was previously set. Aborting");
 }
