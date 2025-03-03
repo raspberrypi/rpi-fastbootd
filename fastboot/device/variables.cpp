@@ -1007,35 +1007,38 @@ bool GetDmesg(FastbootDevice* device) {
     //    return device->WriteFail("Cannot use when device flashing is locked");
     //}
 
-    char * const argv[] = {
-        " > /tmp/dmesg.log",
-        NULL
-    };
+    posix_spawn_file_actions_t action;
+    posix_spawn_file_actions_init(&action);
+    posix_spawn_file_actions_addopen(&action, STDOUT_FILENO, "/tmp/dmesg.log", O_WRONLY|O_CREAT, 0644);
+    posix_spawn_file_actions_adddup2(&action, STDERR_FILENO, STDOUT_FILENO);
+
+    char *arg[] = {"/usr/bin/dmesg", NULL};
 
     int subprocess_rc = -1;
-    int ret = process_spawn_blocking(&subprocess_rc, "dmesg", argv, NULL);
+    int ret = rpi::process_spawn_blocking(&subprocess_rc, "/usr/bin/dmesg", arg, NULL, &action);
 
+    posix_spawn_file_actions_destroy(&action);
     if (ret) {
         return device->WriteFail(strerror(ret));
     } else if (subprocess_rc) {
         return device->WriteFail("Dmesg failed");
     } else {
-        std::string message = {};
-        if (android::base::ReadFileToString("/tmp/dmesg.log", &message)) {
-            return device->WriteInfo(message);
-        } else {
-            return device->WriteFail("Could not read dmesg");
+        std::string dmesg_dump;
+        android::base::ReadFileToString("/tmp/dmesg.log", &dmesg_dump);
+        std::istringstream stream(dmesg_dump);
+        std::string line;
+        while (std::getline(stream, line)) {
+            device->WriteInfo(line);
         }
         return true;
     }
-    
 }
 
 bool GetPubkey(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
                      std::string* message) {
     std::string temporary = {};
     if (android::base::ReadFileToString("/data/key.pub", &temporary)) {
-        *message->assign(temporary);
+        message->assign(temporary);
         return true;
     } else {
         *message = "Could not read public key";

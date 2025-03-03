@@ -25,6 +25,8 @@
 #include <sys/mount.h>
 #include <linux/fs.h>
 #include <unistd.h>
+#include <spawn.h> // for posix_spawnp
+#include <sys/wait.h> // for waitpid
 
 #include <android-base/file.h>
 #include <android-base/logging.h>
@@ -121,6 +123,39 @@ namespace android {
         return ret;
     }
 } // namespace android
+
+namespace rpi {
+    int process_spawn_blocking(int *r, std::string bin, char * const argv[], char * const envp[], posix_spawn_file_actions_t *file_actions) {
+        int ret;
+        pid_t pid;
+        int wstatus;
+    
+        ret = posix_spawnp(
+            &pid,
+            bin.c_str(),
+            file_actions, // file_actions
+            NULL, // spawn_attr
+            argv,
+            envp
+        );
+    
+        if (ret) return ret;
+    
+        do {
+            ret = waitpid(pid, &wstatus, 0);
+            if (ret == -1) break;
+        } while (!WIFEXITED(wstatus) && !WIFSIGNALED(wstatus));
+    
+        if ((ret != -1) && WIFEXITED(wstatus)) {
+            ret = 0;
+            *r = WEXITSTATUS(wstatus);
+        } else {
+            ret = -1;
+        }
+    
+        return ret;
+    }
+}
 
 bool OpenPartition(FastbootDevice* device, const std::string& name, PartitionHandle* handle,
                    int flags) {

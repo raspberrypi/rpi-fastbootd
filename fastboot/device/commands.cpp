@@ -19,7 +19,6 @@
 #include <inttypes.h>
 #include <sys/socket.h>
 #include <sys/un.h>
-#include <sys/wait.h> // for waitpid
 
 #include <unordered_set>
 
@@ -41,8 +40,6 @@
 //#include <storage_literals/storage_literals.h>
 #include <uuid/uuid.h>
 #include <libfdisk/libfdisk.h>
-
-#include <spawn.h> // for posix_spawnp
 
 // #include <bootloader_message/bootloader_message.h>
 
@@ -481,39 +478,6 @@ namespace {
         return device->WriteStatus(FastbootResult::OKAY, "Wrote new partition.");
     }
 
-
-    int process_spawn_blocking(int *r, std::string bin, char * const argv[], char * const envp[]) {
-        int ret;
-        pid_t pid;
-        int wstatus;
-
-        ret = posix_spawnp(
-            &pid,
-            bin.c_str(),
-            NULL, // file_actions
-            NULL, // spawn_attr
-            argv,
-            envp
-        );
-
-        if (ret) return ret;
-
-        do {
-            ret = waitpid(pid, &wstatus, 0);
-            if (ret == -1) break;
-        } while (!WIFEXITED(wstatus) && !WIFSIGNALED(wstatus));
-
-        if ((ret != -1) && WIFEXITED(wstatus)) {
-            ret = 0;
-            *r = WEXITSTATUS(wstatus);
-        } else {
-            ret = -1;
-        }
-
-        return ret;
-    }
-
-
     // oem cryptinit <blkdev> <label>
     static bool oem_cmd_cryptinit(FastbootDevice* device, const std::vector<std::string>& args) {
         if (args.size() < 4) {
@@ -537,7 +501,7 @@ namespace {
             return device->WriteFail("Cannot create context for device " + block_device + " as failed to open");
         }
 
-	std::string cipher = "--cipher=aes-xts-plain64";
+	    std::string cipher = "--cipher=aes-xts-plain64";
 
         if (args.size() >= 5)
             cipher = "--cipher=" + args[4];
@@ -563,7 +527,7 @@ namespace {
         };
 
         int subprocess_rc = -1;
-        int ret = process_spawn_blocking(&subprocess_rc, "cryptsetup", argv, NULL);
+        int ret = rpi::process_spawn_blocking(&subprocess_rc, "cryptsetup", argv, NULL);
 
         if (ret) {
             return device->WriteFail(strerror(ret));
@@ -606,7 +570,7 @@ namespace {
         };
 
         int subprocess_rc = -1;
-        int ret = process_spawn_blocking(&subprocess_rc, "cryptsetup", argv, NULL);
+        int ret = rpi::process_spawn_blocking(&subprocess_rc, "cryptsetup", argv, NULL);
 
         if (ret) {
             return device->WriteFail(strerror(ret));
