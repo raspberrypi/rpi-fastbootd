@@ -3,10 +3,10 @@
 set -e
 
 ## Generate the keys parts
-if /usr/local/bin/rpi-otp-private-key -c; then
-    printf "yes\r\n" >> /data/privkey-already-set
+if [ "$(/usr/local/bin/rpi-otp-private-key -c)" != 0 ]; then
+    printf "yes\r\n" > /data/privkey-already-set
 else
-    printf "no\r\n" >> /data/privkey-already-set
+    printf "no\r\n" > /data/privkey-already-set
     # Generate a key!
     [ ! -f /etc/rpi-no-generate-duk ] && /usr/local/bin/rpi-otp-private-key -y -w "$(openssl genpkey -algorithm ed25519 -outform DER | dd bs=16 skip=1 count=2 2>/dev/null | xxd -c 128 -p | tr -d '\n')"
 fi
@@ -15,7 +15,7 @@ fi
 PRIVATE_KEY=$(/usr/local/bin/rpi-otp-private-key -b | base64 -w0)
 if [ -n "${PRIVATE_KEY}" ]; then
 	printf "%s" "${PRIVATE_KEY}" > /data/fastboot.key
-	printf "%s\r\n" "${PRIVATE_KEY}" >> /data/private.key
+	printf "%s\r\n" "${PRIVATE_KEY}" > /data/private.key
 
 	# Apply correct ed25519 DER header to generate compliant private key
 	{
@@ -24,5 +24,5 @@ if [ -n "${PRIVATE_KEY}" ]; then
 	} > /data/key.der
 
 	# Generate public key
-	printf "%s\r\n" "$(openssl pkey -in /data/key.der -inform DER -pubout | sed '/PUBLIC/d' | tr -d '\n')" >> /data/key.pub
+	printf "%s\r\n" "$(openssl pkey -in /data/key.der -inform DER -pubout | sed '/PUBLIC/d' | tr -d '\n')" > /data/key.pub
 fi
