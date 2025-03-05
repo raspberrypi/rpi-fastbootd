@@ -170,6 +170,7 @@ const std::unordered_map<std::string, VariableHandlers> kVariableMap = {
         {FB_VAR_SIGNED_EEPROM, {GetSignedEeprom, nullptr}},
         {FB_VAR_SIGNED_OTP, {GetSignedOtp, nullptr}},
         {FB_VAR_SIGNED_DEVKEY, {GetSignedDevkey, nullptr}},
+        {FB_VAR_PRIVKEY, {GetPrivkey, nullptr}},
 };
 
 static bool GetVarAll(FastbootDevice* device) {
@@ -190,7 +191,6 @@ static void PostWipeData() {
 const std::unordered_map<std::string, std::function<bool(FastbootDevice*)>> kSpecialVars = {
         {"all", GetVarAll},
         {"dmesg", GetDmesg},
-        {FB_VAR_PRIVKEY, GetPrivkey},
 };
 
 bool GetVarHandler(FastbootDevice* device, const std::vector<std::string>& args) {

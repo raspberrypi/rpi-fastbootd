@@ -120,8 +120,9 @@ bool GetSignedOtp(FastbootDevice* /* device */, const std::vector<std::string>& 
 bool GetDmesg(FastbootDevice* device);
 
 bool GetPubkey(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
-                     std::string* message);
-bool GetPrivkey(FastbootDevice* /* device */);
+    std::string* message);
+bool GetPrivkey(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
+    std::string* message);
 
 // Helpers for getvar all.
 std::vector<std::vector<std::string>> GetAllPartitionArgsWithSlot(FastbootDevice* device);
