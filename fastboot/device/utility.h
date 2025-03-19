@@ -18,6 +18,8 @@
 #include <optional>
 #include <string>
 
+#include <spawn.h> // for posix_spawnactions
+
 #include <android-base/file.h>
 #include <android-base/logging.h>
 #include <android-base/unique_fd.h>
@@ -135,3 +137,7 @@ namespace android {
 
     int wipe_block_device(int fd);
 } // namespace android
+
+namespace rpi {
+    int process_spawn_blocking(int *r, std::string bin, char * const argv[], char * const envp[], posix_spawn_file_actions_t *file_actions = NULL);
+} // namespace rpi

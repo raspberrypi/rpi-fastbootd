@@ -104,176 +104,158 @@ bool GetRpiDuid(FastbootDevice * /* device */, const std::vector<std::string> & 
     return true;
 }
 
+namespace {
+    void inspectOtp(std::function<bool(std::string *, std::string *)> inspectorfn, std::string *message) {
+        if (inspectorfn == nullptr) {
+            return;
+        }
+
+        std::string otp_dump;
+        posix_spawn_file_actions_t action;
+        posix_spawn_file_actions_init(&action);
+        posix_spawn_file_actions_addopen(&action, STDOUT_FILENO, "/tmp/otp.log", O_WRONLY | O_CREAT, 0644);
+        posix_spawn_file_actions_adddup2(&action, STDOUT_FILENO, STDERR_FILENO);
+    
+        char *arg[] = {"/usr/bin/vcgencmd", "otp_dump", NULL};
+        int subprocess_rc = -1;
+        int ret = rpi::process_spawn_blocking(&subprocess_rc, "/usr/bin/vcgencmd", arg, NULL, &action);
+        posix_spawn_file_actions_destroy(&action);
+    
+        if (ret)
+        {
+            *message = strerror(errno);
+            return;
+        }
+        else if (subprocess_rc)
+        {
+            *message = "vcgencmd failed";
+            return;
+        }
+        else
+        {
+            android::base::ReadFileToString("/tmp/otp.log", &otp_dump);
+        }
+
+        std::istringstream stream(otp_dump);
+        std::string line;
+        while (std::getline(stream, line)) {
+            size_t pos = line.find(':');
+            if (pos != std::string::npos) {
+                std::string key = line.substr(0, pos);
+                std::string value = line.substr(pos + 1);
+    
+                if (inspectorfn(&key, &value)) {
+                    return;
+                }
+            }
+        }
+    }
+} // namespace anonymous
+
 bool GetRevisionProcessor(FastbootDevice * /* device */, const std::vector<std::string> & /* args */,
                           std::string *message)
 {
-    std::string revision;
-    android::base::ReadFileToString("/proc/cpuinfo", &revision);
+    inspectOtp([&message](std::string *key, std::string *value){
+        if (*key == "32") {
+            uint32_t value_int = std::stoul(*value, 0, 16);
 
-    size_t pos = revision.find("Revision");
-    if (pos != std::string::npos)
-    {
-        std::string rev_str = revision.substr(pos);
-        unsigned int rev_val;
-        if (sscanf(rev_str.c_str(), "Revision : %x", &rev_val) == 1)
-        {
-            // unsigned int memory_size = (rev_val >> 20) & 0x7;
-            // unsigned int manufacturer = (rev_val >> 16) & 0xF;
-            unsigned int processor = (rev_val >> 12) & 0xF;
-            // unsigned int type = (rev_val >> 4) & 0xFF;
-            // unsigned int rev = rev_val & 0xF;
-
-            *message = android::base::StringPrintf("0x%X", processor);
+            *message = android::base::StringPrintf("0x%X", (value_int & 0xF000) >> 12);
+            return true;
         }
-    }
+        return false;
+    },message);
+
     return true;
 }
 
 bool GetRevisionManufacturer(FastbootDevice * /* device */, const std::vector<std::string> & /* args */,
                              std::string *message)
 {
-    std::string revision;
-    android::base::ReadFileToString("/proc/cpuinfo", &revision);
+    inspectOtp([&message](std::string *key, std::string *value) {
+        if (*key == "32") {
+            uint32_t value_int = std::stoul(*value, 0, 16);
 
-    size_t pos = revision.find("Revision");
-    if (pos != std::string::npos)
-    {
-        std::string rev_str = revision.substr(pos);
-        unsigned int rev_val;
-        if (sscanf(rev_str.c_str(), "Revision : %x", &rev_val) == 1)
-        {
-            // unsigned int memory_size = (rev_val >> 20) & 0x7;
-            unsigned int manufacturer = (rev_val >> 16) & 0xF;
-            // unsigned int processor = (rev_val >> 12) & 0xF;
-            // unsigned int type = (rev_val >> 4) & 0xFF;
-            // unsigned int rev = rev_val & 0xF;
-
-            *message = android::base::StringPrintf("0x%X", manufacturer);
+            *message = android::base::StringPrintf("0x%X", (value_int & 0xF0000) >> 16);
+            return true;
         }
-    }
+        return false;
+    },message);
     return true;
 }
 
 bool GetRevisionMemory(FastbootDevice * /* device */, const std::vector<std::string> & /* args */,
                        std::string *message)
 {
-    std::string revision;
-    android::base::ReadFileToString("/proc/cpuinfo", &revision);
+    inspectOtp([&message](std::string *key, std::string *value) {
+        if (*key == "32") {
+            uint32_t value_int = std::stoul(*value, 0, 16);
 
-    size_t pos = revision.find("Revision");
-    if (pos != std::string::npos)
-    {
-        std::string rev_str = revision.substr(pos);
-        unsigned int rev_val;
-        if (sscanf(rev_str.c_str(), "Revision : %x", &rev_val) == 1)
-        {
-            unsigned int memory_size = (rev_val >> 20) & 0x7;
-            // unsigned int manufacturer = (rev_val >> 16) & 0xF;
-            // unsigned int processor = (rev_val >> 12) & 0xF;
-            // unsigned int type = (rev_val >> 4) & 0xFF;
-            // unsigned int rev = rev_val & 0xF;
-
-            *message = android::base::StringPrintf("0x%X", memory_size);
+            *message = android::base::StringPrintf("0x%X", (value_int & 0x700000) >> 20);
+            return true;
         }
-    }
+        return false;
+    },message);
+
     return true;
 }
 
 bool GetRevisionType(FastbootDevice * /* device */, const std::vector<std::string> & /* args */,
                      std::string *message)
 {
-    std::string revision;
-    android::base::ReadFileToString("/proc/cpuinfo", &revision);
+    inspectOtp([&message](std::string *key, std::string *value) {
+        if (*key == "32") {
+            uint32_t value_int = std::stoul(*value, 0, 16);
 
-    size_t pos = revision.find("Revision");
-    if (pos != std::string::npos)
-    {
-        std::string rev_str = revision.substr(pos);
-        unsigned int rev_val;
-        if (sscanf(rev_str.c_str(), "Revision : %x", &rev_val) == 1)
-        {
-            // unsigned int memory_size = (rev_val >> 20) & 0x7;
-            // unsigned int manufacturer = (rev_val >> 16) & 0xF;
-            // unsigned int processor = (rev_val >> 12) & 0xF;
-            unsigned int type = (rev_val >> 4) & 0xFF;
-            // unsigned int rev = rev_val & 0xF;
-
-            *message = android::base::StringPrintf("0x%X", type);
+            *message = android::base::StringPrintf("0x%X", (value_int & 0x0FF0) >> 4);
+            return true;
         }
-    }
+        return false;
+    },message);
     return true;
 }
 
 bool GetRevisionRevision(FastbootDevice * /* device */, const std::vector<std::string> & /* args */,
                          std::string *message)
 {
-    std::string revision;
-    android::base::ReadFileToString("/proc/cpuinfo", &revision);
+    inspectOtp([&message](std::string *key, std::string *value) {
+        if (*key == "32") {
+            uint32_t value_int = std::stoul(*value, 0, 16);
 
-    size_t pos = revision.find("Revision");
-    if (pos != std::string::npos)
-    {
-        std::string rev_str = revision.substr(pos);
-        unsigned int rev_val;
-        if (sscanf(rev_str.c_str(), "Revision : %x", &rev_val) == 1)
-        {
-            // unsigned int memory_size = (rev_val >> 20) & 0x7;
-            // unsigned int manufacturer = (rev_val >> 16) & 0xF;
-            // unsigned int processor = (rev_val >> 12) & 0xF;
-            // unsigned int type = (rev_val >> 4) & 0xFF;
-            unsigned int rev = rev_val & 0xF;
-
-            *message = android::base::StringPrintf("0x%X", rev);
+            *message = android::base::StringPrintf("0x%X", (value_int & 0x0F));
+            return true;
         }
-    }
+        return false;
+    },message);
+
     return true;
 }
 
 bool GetMacEthernet(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
                     std::string* message) {
-    std::string otp_dump;
-    {
-        posix_spawn_file_actions_t action;
-        posix_spawn_file_actions_init(&action);
-        posix_spawn_file_actions_addopen(&action, STDOUT_FILENO, "/tmp/otp.log", O_WRONLY|O_CREAT, 0644);
-
-        pid_t pid;
-        char *arg[] = {"/usr/bin/vcgencmd", "otp_dump", NULL};
-        int status;
-        int ret = posix_spawnp(&pid, "/usr/bin/vcgencmd", &action, NULL, arg, NULL);
-
-        if (ret == 0) {
-            do {
-                ret = waitpid(pid, &status, 0);
-            } while (ret == -1 && errno == EINTR);
-            posix_spawn_file_actions_destroy(&action);
-            android::base::ReadFileToString("/tmp/otp.log", &otp_dump);
-        }
-    }
-
-    std::string eth_mac_up, eth_mac_lo;
-    std::istringstream stream(otp_dump);
-    std::string line;
-    while (std::getline(stream, line)) {
-        size_t pos = line.find(':');
-        if (pos != std::string::npos) {
-            std::string key = line.substr(0, pos);
-            std::string value = line.substr(pos + 1);
-
-            if (key == "50") {
-                eth_mac_lo = value.substr(0, 4);
-                // Insert colons between pairs
-                for (size_t i = 2; i < eth_mac_lo.length(); i += 3) {
-                    eth_mac_lo.insert(i, ":");
-                }
-            } else if (key == "51") {
-                eth_mac_up = value;
-                for (size_t i = 2; i < eth_mac_up.length(); i += 3) {
-                    eth_mac_up.insert(i, ":");
-                }
+    std::string eth_mac_lo, eth_mac_up;
+    uint required = 2;
+    inspectOtp([&eth_mac_lo, &eth_mac_up, &required](std::string *key, std::string *value) {
+        if (*key == "50") {
+            eth_mac_lo = value->substr(0, 4);
+            // Insert colons between pairs
+            for (size_t i = 2; i < eth_mac_lo.length(); i += 3) {
+                eth_mac_lo.insert(i, ":");
             }
+            required--;
+        } else if (*key == "51") {
+            eth_mac_up = *value;
+            for (size_t i = 2; i < eth_mac_up.length(); i += 3) {
+                eth_mac_up.insert(i, ":");
+            }
+            required--;
         }
-    }
+
+        if (!required) {
+            return true;
+        } else {
+            return false;
+        }
+    }, message);
     *message = eth_mac_up + ":" + eth_mac_lo;
     return true;
 }
@@ -281,52 +263,30 @@ bool GetMacEthernet(FastbootDevice* /* device */, const std::vector<std::string>
 bool GetMacWifi(FastbootDevice * /* device */, const std::vector<std::string> & /* args */,
                 std::string *message)
 {
-    std::string otp_dump;
-    {
-        posix_spawn_file_actions_t action;
-        posix_spawn_file_actions_init(&action);
-        posix_spawn_file_actions_addopen(&action, STDOUT_FILENO, "/tmp/otp.log", O_WRONLY | O_CREAT, 0644);
-
-        pid_t pid;
-        char *arg[] = {"/usr/bin/vcgencmd", "otp_dump", NULL};
-        int status;
-        int ret = posix_spawnp(&pid, "/usr/bin/vcgencmd", &action, NULL, arg, NULL);
-
-        if (ret == 0)
-        {
-            do
-            {
-                ret = waitpid(pid, &status, 0);
-            } while (ret == -1 && errno == EINTR);
-            posix_spawn_file_actions_destroy(&action);
-            android::base::ReadFileToString("/tmp/otp.log", &otp_dump);
-        }
-    }
-
     std::string wifi_mac_lo, wifi_mac_up;
-    std::istringstream stream(otp_dump);
-    std::string line;
-    while (std::getline(stream, line))
-    {
-        size_t pos = line.find(':');
-        if (pos != std::string::npos)
-        {
-            std::string key = line.substr(0, pos);
-            std::string value = line.substr(pos + 1);
-
-            if (key == "52") {
-                wifi_mac_lo = value.substr(0, 4);
-                for (size_t i = 2; i < wifi_mac_lo.length(); i += 3) {
-                    wifi_mac_lo.insert(i, ":");
-                }
-            } else if (key == "53") {
-                wifi_mac_up = value;
-                for (size_t i = 2; i < wifi_mac_up.length(); i += 3) {
-                    wifi_mac_up.insert(i, ":");
-                }
-            } 
+    uint required = 2;
+    inspectOtp([&wifi_mac_lo, &wifi_mac_up, &required](std::string *key, std::string *value) {
+        if (*key == "52") {
+            wifi_mac_lo = value->substr(0, 4);
+            for (size_t i = 2; i < wifi_mac_lo.length(); i += 3) {
+                wifi_mac_lo.insert(i, ":");
+            }
+            required--;
+        } else if (*key == "53") {
+            wifi_mac_up = *value;
+            for (size_t i = 2; i < wifi_mac_up.length(); i += 3) {
+                wifi_mac_up.insert(i, ":");
+            }
+            required--;
         }
-    }
+        
+        if (!required)
+        {
+            return true;
+        } else {
+            return false;
+        }
+    }, message);
     *message = wifi_mac_up + ":" + wifi_mac_lo;
     return true;
 }
@@ -334,57 +294,35 @@ bool GetMacWifi(FastbootDevice * /* device */, const std::vector<std::string> & 
 bool GetMacBt(FastbootDevice * /* device */, const std::vector<std::string> & /* args */,
               std::string *message)
 {
-    std::string otp_dump;
-    {
-        posix_spawn_file_actions_t action;
-        posix_spawn_file_actions_init(&action);
-        posix_spawn_file_actions_addopen(&action, STDOUT_FILENO, "/tmp/otp.log", O_WRONLY | O_CREAT, 0644);
-
-        pid_t pid;
-        char *arg[] = {"/usr/bin/vcgencmd", "otp_dump", NULL};
-        int status;
-        int ret = posix_spawnp(&pid, "/usr/bin/vcgencmd", &action, NULL, arg, NULL);
-
-        if (ret == 0)
+    std::string mac_lo, mac_hi;
+    uint required = 2;
+    inspectOtp([&mac_lo, &mac_hi, &required](std::string *key, std::string *value) {
+        if (*key == "54")
         {
-            do
+            mac_lo = value->substr(0, 4);
+            for (size_t i = 2; i < mac_lo.length(); i += 3)
             {
-                ret = waitpid(pid, &status, 0);
-            } while (ret == -1 && errno == EINTR);
-            posix_spawn_file_actions_destroy(&action);
-            android::base::ReadFileToString("/tmp/otp.log", &otp_dump);
+                mac_lo.insert(i, ":");
+            }
+            required--;
         }
-    }
-
-    std::string mac_hi, mac_lo;
-    std::istringstream stream(otp_dump);
-    std::string line;
-    while (std::getline(stream, line))
-    {
-        size_t pos = line.find(':');
-        if (pos != std::string::npos)
+        else if (*key == "55")
         {
-            std::string key = line.substr(0, pos);
-            std::string value = line.substr(pos + 1);
-
-            if (key == "54")
+            mac_hi = *value;
+            for (size_t i = 2; i < mac_hi.length(); i += 3)
             {
-                mac_lo = value.substr(0, 4);
-                for (size_t i = 2; i < mac_lo.length(); i += 3)
-                {
-                    mac_lo.insert(i, ":");
-                }
+                mac_hi.insert(i, ":");
             }
-            else if (key == "55")
-            {
-                mac_hi = value;
-                for (size_t i = 2; i < mac_hi.length(); i += 3)
-                {
-                    mac_hi.insert(i, ":");
-                }
-            }
+            required--;
         }
-    }
+        
+        if (!required)
+        {
+            return true;
+        } else {
+            return false;
+        }
+    }, message);
     *message = mac_hi + ":" + mac_lo;
     return true;
 }
@@ -420,7 +358,13 @@ bool GetSignedEeprom(FastbootDevice* /* device */, const std::vector<std::string
                            std::string* message) {
     std::string signed_raw = {};
     if (android::base::ReadFileToString("/proc/device-tree/chosen/bootloader/signed", &signed_raw)) {
-        *message = (std::stoi(signed_raw) & (1 << 0)) ? "present" : "not present";
+        try {
+            *message = (std::stoi(signed_raw) & (1 << 0)) ? "present" : "not present";
+        } catch (const std::invalid_argument& e) {
+            *message = "not available";
+        } catch (const std::out_of_range& e) {
+            *message = "not available";
+        }
     } else {
         *message = "not available";
     }
@@ -431,7 +375,13 @@ bool GetSignedDevkey(FastbootDevice* /* device */, const std::vector<std::string
                          std::string* message) {
     std::string signed_raw = {};
     if (android::base::ReadFileToString("/proc/device-tree/chosen/bootloader/signed", &signed_raw)) {
-        *message = (std::stoi(signed_raw) & (1 << 2)) ? "present" : "not present";
+        try {
+            *message = (std::stoi(signed_raw) & (1 << 2)) ? "present" : "not present";
+        } catch (const std::invalid_argument& e) {
+            *message = "not available";
+        } catch (const std::out_of_range& e) {
+            *message = "not available";
+        }
     } else {
         *message = "not available";
     }
@@ -442,7 +392,13 @@ bool GetSignedOtp(FastbootDevice* /* device */, const std::vector<std::string>& 
                         std::string* message) {
     std::string signed_raw = {};
     if (android::base::ReadFileToString("/proc/device-tree/chosen/bootloader/signed", &signed_raw)) {
-        *message = (std::stoi(signed_raw) & (1 << 3)) ? "present" : "not present";
+        try {
+            *message = (std::stoi(signed_raw) & (1 << 3)) ? "present" : "not present";
+        } catch (const std::invalid_argument& e) {
+            *message = "not available";
+        } catch (const std::out_of_range& e) {
+            *message = "not available";
+        }
     } else {
         *message = "not available";
     }
@@ -453,39 +409,36 @@ bool GetSecure(FastbootDevice* /* device */, const std::vector<std::string>& /* 
                std::string* message) {
     posix_spawn_file_actions_t action;
     posix_spawn_file_actions_init(&action);
-    posix_spawn_file_actions_addopen (&action, STDOUT_FILENO, "/tmp/opt.log", O_WRONLY|O_CREAT, 0);
+    posix_spawn_file_actions_addopen (&action, STDOUT_FILENO, "/tmp/has-private-key.log", O_WRONLY|O_CREAT, 0);
+    posix_spawn_file_actions_adddup2(&action, STDOUT_FILENO, STDERR_FILENO);
 
-    pid_t pid;
     char *arg[] = {"/usr/local/bin/rpi-otp-private-key", "-c", NULL};
-    int status;
-    int ret;
-    int wstatus;
-    ret = posix_spawnp(&pid, "/usr/local/bin/rpi-otp-private-key", &action, NULL, arg, NULL);
-
-
-    if (ret) {
-        *message = strerror(ret);
-        return false;
-    }
-    else {
-    do {
-        ret = waitpid(pid, &wstatus, 0);
-        if (ret == -1) break;
-    } while (!WIFEXITED(wstatus) && !WIFSIGNALED(wstatus));
-
+    int subprocess_rc = -1;
+    int ret = rpi::process_spawn_blocking(&subprocess_rc, "/usr/local/bin/rpi-otp-private-key", arg, NULL, &action);
     posix_spawn_file_actions_destroy(&action);
-    std::string secure;
-    android::base::ReadFileToString("/tmp/opt.log", &secure);
-    if (secure.find("1") != std::string::npos)
+
+    if (ret)
     {
-        *message = "yes";
+        *message = strerror(errno);
+    }
+    else if (subprocess_rc)
+    {
+        *message = "unknown";
     }
     else
     {
-        *message = "no";
+        std::string has_private_key = {};
+        android::base::ReadFileToString("/tmp/has-private-key.log", &has_private_key);
+        if (has_private_key.find("1") != std::string::npos)
+        {
+            *message = "yes";
+        }
+        else
+        {
+            *message = "no";
+        }
     }
     return true;
-    }
 }
 
 bool GetVariant(FastbootDevice* device, const std::vector<std::string>& /* args */,
@@ -927,81 +880,82 @@ bool GetDmesg(FastbootDevice* device) {
     //    return device->WriteFail("Cannot use when device flashing is locked");
     //}
 
-    std::unique_ptr<FILE, decltype(&::pclose)> fp(popen("/usr/bin/dmesg", "re"), ::pclose);
-    if (!fp) {
-        PLOG(ERROR) << "popen /usr/bin/dmesg";
-        return device->WriteFail("Unable to run dmesg: "s + strerror(errno));
-    }
+    posix_spawn_file_actions_t action;
+    posix_spawn_file_actions_init(&action);
+    posix_spawn_file_actions_addopen(&action, STDOUT_FILENO, "/tmp/dmesg.log", O_WRONLY | O_CREAT, 0644);
+    posix_spawn_file_actions_adddup2(&action, STDOUT_FILENO, STDERR_FILENO);
 
-    ssize_t rv;
-    size_t n = 0;
-    char* str = nullptr;
-    while ((rv = ::getline(&str, &n, fp.get())) > 0) {
-        if (str[rv - 1] == '\n') {
-            rv--;
-        }
-        device->WriteInfo(std::string(str, rv));
-    }
+    char *arg[] = {"/usr/bin/dmesg", NULL};
 
-    int saved_errno = errno;
-    ::free(str);
+    int subprocess_rc = -1;
+    int ret = rpi::process_spawn_blocking(&subprocess_rc, "/usr/bin/dmesg", arg, NULL, &action);
 
-    if (rv < 0 && saved_errno) {
-        LOG(ERROR) << "dmesg getline: " << strerror(saved_errno);
-        device->WriteFail("Unable to read dmesg: "s + strerror(saved_errno));
+    posix_spawn_file_actions_destroy(&action);
+    if (ret)
+    {
+        device->WriteFail(strerror(errno));
         return false;
     }
-
-    return true;
+    else if (subprocess_rc)
+    {
+        device->WriteFail("Dmesg failed");
+        return false;
+    }
+    else
+    {
+        std::string dmesg_dump;
+        if (android::base::ReadFileToString("/tmp/dmesg.log", &dmesg_dump))
+        {
+            std::istringstream stream(dmesg_dump);
+            std::string line;
+            while (std::getline(stream, line))
+            {
+                if (!device->WriteInfo(line))
+                {
+                    LOG(ERROR) << "Failed to write info to device";
+                    return false;
+                }
+            }
+            return true;
+        }
+        else
+        {
+            device->WriteFail("Failed to read /tmp/dmesg.log");
+            return false;
+        }
+    }
 }
 
 bool GetPubkey(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
                      std::string* message) {
-    android::base::ReadFileToString("/data/key.pub", message);
-    return true;
+    std::string temporary = {};
+    if (android::base::ReadFileToString("/data/key.pub", &temporary)) {
+        message->assign(temporary);
+        return true;
+    } else {
+        *message = "Could not read public key";
+        return false;
+    }
 }
 
-bool GetPrivkey(FastbootDevice* device) {
+bool GetPrivkey(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
+    std::string* message) {
     // Need to check if key is already set
-    std::string privkey_already_set;
+    std::string privkey_already_set = {};
     android::base::ReadFileToString("/data/privkey-already-set", &privkey_already_set);
     if (privkey_already_set.find("yes") != std::string::npos)
     {
-        return device->WriteFail("Preventing key access since previously set");
-    }
-    // if OK, reveal key
-    if (privkey_already_set.find("no") != std::string::npos)
+        *message = "refused";
+    } else if (privkey_already_set.find("no") != std::string::npos)
     {
-        // Create the key, write to OTP
-        {
-            std::unique_ptr<FILE, decltype(&::pclose)> fp(popen("/usr/local/bin/generate-device-key", "re"), ::pclose);
-            if (!fp) {
-                PLOG(ERROR) << "popen /usr/local/bin/generate-device-key";
-                return device->WriteFail("Unable to generate device key: "s + strerror(errno));
-            }
-            
-            ssize_t rv;
-            size_t n = 0;
-            char* str = nullptr;
-            while ((rv = ::getline(&str, &n, fp.get())) > 0) {
-                if (str[rv - 1] == '\n') {
-                    rv--;
-                }
-                device->WriteInfo(std::string(str, rv));
-            }
-
-            int saved_errno = errno;
-            ::free(str);
-
-            if (rv < 0 && saved_errno) {
-                LOG(ERROR) << "generate-device-key getline: " << strerror(saved_errno);
-                return device->WriteFail("generate-device-key failed: "s + strerror(saved_errno));;
-            }
-
+        std::string key;
+        if (android::base::ReadFileToString("/data/private.key", &key)) {
+            *message = key;
+        } else {
+            *message = "error";
         }
-        std::string message;
-        android::base::ReadFileToString("/data/private.key", &message);
-        return device->WriteOkay(message);
+    } else {
+        *message = "error";
     }
-    return device->WriteFail("Could not determine if key was previously set. Aborting");
+    return true;
 }
