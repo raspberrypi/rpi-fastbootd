@@ -55,6 +55,7 @@ target_include_directories(fastbootd PRIVATE
     ${URING_INCLUDE_DIRS}
     ${ZLIB_INCUDE_DIRS}
     ${SYSTEMD_INCLUDE_DIRS}
+    ${CMAKE_CURRENT_LIST_DIR}/../rpiparted/include
 )
 
 target_link_directories(fastbootd PRIVATE "/usr/lib/aarch64-linux-gnu/android")
@@ -68,6 +69,7 @@ target_link_libraries(fastbootd PRIVATE
     cutils
     log
     base
+    rpiparted
 )
 
 # Define install, packaging, signing tasks

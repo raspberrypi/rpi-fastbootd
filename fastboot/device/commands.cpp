@@ -39,7 +39,6 @@
 // #include <libsnapshot/snapshot.h>
 //#include <storage_literals/storage_literals.h>
 #include <uuid/uuid.h>
-#include <libfdisk/libfdisk.h>
 
 // #include <bootloader_message/bootloader_message.h>
 
@@ -49,6 +48,7 @@
 #include "flashing.h"
 #include "utility.h"
 #include "storage_literals.h"
+#include "rpiparted.h"
 
 #include <iostream>
 #include <fstream>
@@ -283,168 +283,67 @@ bool EraseHandler(FastbootDevice* device, const std::vector<std::string>& args) 
 }
 
 namespace {
-    struct FdiskPartitionDeleter {
-        FdiskPartitionDeleter() {};
-        void operator()(struct fdisk_partition* pa) const {
-            fdisk_unref_partition(pa);
-        };
-    };
-
-    struct FdiskContextDeleter {
-        FdiskContextDeleter() {};
-        void operator()(struct fdisk_context *fdc) const {
-            if (fdisk_get_devfd(fdc))
-            {
-                fdisk_deassign_device(fdc, 0);
-            }
-            fdisk_unref_context(fdc);
-        };
-    };
-
-
-    static std::unique_ptr<struct fdisk_context, FdiskContextDeleter> context_from_device(FastbootDevice *device, std::string block_device_path) {
-        if (block_device_path.empty()) {
-            return nullptr;
-        }
-
-        PartitionHandle handle;
-        if (!OpenPartition(device, block_device_path, &handle, O_WRONLY | O_DIRECT)) {
-            LOG(ERROR) << "Cannot create context for device " << block_device_path << " as failed to open";
-            return nullptr;
-        }
-
-        std::unique_ptr<struct fdisk_context, FdiskContextDeleter> fd(fdisk_new_context(), FdiskContextDeleter());
-        if (!fd) return nullptr;
-
-        if (fdisk_disable_dialogs(fd.get(), 1)) {
-            return nullptr;
-        }
-
-        if (fdisk_assign_device(fd.get(), block_device_path.c_str(), false) < 0) {
-            return nullptr;
-        }
-
-        // TODO: Check this... it should be the same as pi-gen
-        fdisk_save_user_grain(fd.get(), (4 * 1024 * 1024));
-
-        return std::move(fd);
-    }
-
-    static void release_context(struct fdisk_context *fd) {
-        if (!fd) return;
-        fdisk_deassign_device(fd, 0);
-        fdisk_unref_context(fd);
-    }
-
-    #define PARTINIT_USAGE "e.g:\r\n\toem partinit mmcblk0 DOS [id]"
+    #define PARTINIT_USAGE "e.g:\r\n\toem partinit mmcblk0 <label> [id]"
     static bool oem_cmd_partinit(FastbootDevice* device, const std::vector<std::string>& args) {
         if (args.size() < 4) {
-            return device->WriteStatus(FastbootResult::FAIL, "Invalid argument count. Wanted oem partinit mmcblk0 DOS [id]");
+            return device->WriteStatus(FastbootResult::FAIL, "Invalid argument count. Wanted oem partinit mmcblk0 <label> [id]");
         }
-        std::unique_ptr<struct fdisk_context, FdiskContextDeleter> fd;
         auto target_device = args[2];
         auto disk_label = args[3];
         target_device.insert(0, "/dev/");
+        RPIparted disk;
+        bool result;
 
-        if (!(fd = context_from_device(device, target_device))) {
-            return device->WriteStatus(FastbootResult::FAIL, "Invalid argument count. " PARTINIT_USAGE);
-        }
-
-        if(fdisk_create_disklabel(fd.get(), disk_label.c_str())) {
-            return device->WriteStatus(FastbootResult::FAIL, "Invalid label. " PARTINIT_USAGE);
+        if (!disk.openDevice(target_device, 4*1024)) {
+            return device->WriteStatus(FastbootResult::FAIL, "Incorrect block device. " PARTINIT_USAGE);
         }
 
         // label_id is optional.
-        // DOS implementation is strtoul (can be 0x prefixed)
-        if (args.size() == 5) {
-            if(fdisk_set_disklabel_id_from_string(fd.get(), args[4].c_str())) {
-                return device->WriteStatus(FastbootResult::FAIL, "Invalid id. " PARTINIT_USAGE);
-            }
-        }
+        if (args.size() == 5)
+           result = disk.createPartitionTable(disk_label.c_str(), args[4].c_str());
+        else
+           result = disk.createPartitionTable(disk_label.c_str(), std::nullopt);
 
-        if (fdisk_write_disklabel(fd.get())) {
+        if (!result)
             return device->WriteStatus(FastbootResult::FAIL, "Failed to write the disk label. " PARTINIT_USAGE);
-        }
-
-        if (fdisk_reread_partition_table(fd.get())) {
-            return device->WriteStatus(FastbootResult::FAIL, "Could not update partition table.");
-        }
 
         return device->WriteStatus(FastbootResult::OKAY, "Initialised partition successfully");
     }
 
-    static std::unique_ptr<struct fdisk_partition, FdiskPartitionDeleter> append_partition_template(struct fdisk_parttype *type, uint64_t size) {
-        std::unique_ptr<struct fdisk_partition, FdiskPartitionDeleter> pa(fdisk_new_partition(), FdiskPartitionDeleter());
-        if (!pa) return nullptr;
+    constexpr const char * LINUX = "0fc63daf-8483-4772-8e79-3d69d8477de4";
+    constexpr const char * SWAP = "0657fd6d-a4ab-43c4-84e5-0933c84b4f4f";
+    constexpr const char * HOME = "933ac7e1-2eb4-4f13-b844-0e14e2aef915";
+    constexpr const char * EFI = "c12a7328-f81f-11d2-ba4b-00a0c93ec93b";
+    constexpr const char * RAID = "a19d880f-05fc-4d3b-a006-743f0f84911e";
+    constexpr const char * LVM = "e6d6d379-f507-44c2-a23c-238f2a3df928";
+    constexpr const char * FAT32 = "ebd0a0a2-b9e5-4433-87c0-68b6b72699c7";
 
-        if (fdisk_partition_start_follow_default(pa.get(), 1))
-            return nullptr;
-
-        if (fdisk_partition_partno_follow_default(pa.get(), 1))
-            return nullptr;
-
-        /*
-        if (fdisk_partition_set_name(pa, name))
-            return nullptr;
-        */
-
-        if (fdisk_partition_set_type(pa.get(), type))
-            return nullptr;
-
-        if (size) {
-            if (fdisk_partition_set_size(pa.get(), size))
-                return nullptr;
-        } else {
-            if (fdisk_partition_end_follow_default(pa.get(), 1))
-                return nullptr;
-        }
-
-        /*
-        if (uuid && fdisk_partition_set_uuid(pa, uuid))
-            return nullptr;
-        */
-
-        /*
-        * Also possible to set attrs
-        */
-
-        return pa;
+    static std::string map_code(std::string_view c) {
+       if (c == "L" || c == "linux") return LINUX;
+       if (c == "S" || c == "swap") return SWAP;
+       if (c == "H" || c == "home") return HOME;
+       if (c == "U" || c == "esp" || c == "uefi" ) return EFI;
+       if (c == "R" || c == "raid") return RAID;
+       if (c == "V" || c == "lvm") return LVM;
+       if (c == "F" || c == "fat32") return FAT32;
+       return std::string(c);
     }
 
-    #define PARTAPP_USAGE "e.g:\r\n\toem partapp mmcblk0 <hex code> <size>"
+    #define PARTAPP_USAGE "e.g:\r\n\toem partapp mmcblk0 <part code> <size>"
     static bool oem_cmd_partapp(FastbootDevice* device, const std::vector<std::string>& args) {
         int ret = -1;
-
 
         if (args.size() < 4) {
             return device->WriteStatus(FastbootResult::FAIL, "Invalid argument count. "  PARTAPP_USAGE);
         }
 
         auto block_device = args[2];
-        auto partition_type = args[3];
+        std::string partition_type = map_code(args[3]);
         block_device.insert(0, "/dev/");
+        RPIparted disk;
 
-        auto fd = context_from_device(device, block_device);
-        if (!fd) {
+        if (!disk.openDevice(block_device, 4*1024)) {
             return device->WriteStatus(FastbootResult::FAIL, "Incorrect block device. " PARTAPP_USAGE);
-        }
-
-        unsigned int sector_size = fdisk_get_sector_size(fd.get());
-
-        struct fdisk_label *lb;
-        if (!(lb = fdisk_get_label(fd.get(), NULL))) {
-            return device->WriteStatus(FastbootResult::FAIL, "Partition table not initialised");
-        }
-        struct fdisk_parttype *pt;
-        /*
-        if (!type || !(pt = fdisk_label_get_parttype_from_string(lb, type))) {
-            *response = "\r\n Partition type not recognised\r\n\r\n" PARTAPP_USAGE;
-            goto free_context;
-        }
-        */
-        unsigned int code;
-        if (1 != sscanf(partition_type.c_str(), "%x", &code) || !(pt = fdisk_label_get_parttype_from_code(lb, code))) {
-            return device->WriteStatus(FastbootResult::FAIL, "Partition type not recognised. " PARTAPP_USAGE);
         }
 
         uint64_t size = 0;
@@ -452,27 +351,12 @@ namespace {
             auto size_string = args[4];
 
             if (!android::base::ParseUint(size_string, &size)) {
-                return device->WriteStatus(FastbootResult::FAIL, "Unable to parse parititon size. " PARTAPP_USAGE);
+                return device->WriteStatus(FastbootResult::FAIL, "Unable to parse partition size. " PARTAPP_USAGE);
             }
-
-            size /= sector_size;
         }
 
-        auto pa = append_partition_template(pt, size);
-        if (!pa) {
-            return device->WriteStatus(FastbootResult::FAIL, "Could not create new partition template.");
-        }
-
-        if (fdisk_add_partition(fd.get(), pa.get(), NULL)) {
-            return device->WriteStatus(FastbootResult::FAIL, "Could not add partition.");
-        }
-
-        if (fdisk_write_disklabel(fd.get())) {
-            return device->WriteStatus(FastbootResult::FAIL, "Could not write disk label.");
-        }
-
-        if (fdisk_reread_partition_table(fd.get())) {
-            return device->WriteStatus(FastbootResult::FAIL, "Could not update partition table.");
+        if (!disk.appendPartition(size, partition_type.c_str())) {
+            return device->WriteStatus(FastbootResult::FAIL, "Failed to append partition. " PARTAPP_USAGE);
         }
 
         return device->WriteStatus(FastbootResult::OKAY, "Wrote new partition.");
