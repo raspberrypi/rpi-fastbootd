@@ -30,6 +30,8 @@
 #include "transport.h"
 #include "variables.h"
 
+#include "idpdevice.h"
+
 class FastbootDevice {
   public:
     // using BootControlClient = android::hal::BootControlClient;
@@ -60,6 +62,9 @@ class FastbootDevice {
     // std::shared_ptr<aidl::android::hardware::health::IHealth> health_hal() { return health_hal_; }
 
     void set_active_slot(const std::string& active_slot) { active_slot_ = active_slot; }
+
+    IDPdevice * idp = nullptr;
+    IDPdevice::CookiePtr idpcookie{nullptr, IDPcookieDeleter};
 
   private:
     const std::unordered_map<std::string, CommandHandler> kCommandMap;

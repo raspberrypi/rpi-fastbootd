@@ -70,6 +70,8 @@ target_link_libraries(fastbootd PRIVATE
     log
     base
     rpiparted
+    rpiidp
+    jsoncpp_static
 )
 
 # Define install, packaging, signing tasks

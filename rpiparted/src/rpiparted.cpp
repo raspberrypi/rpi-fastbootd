@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cerrno>
 #include <cstring>
+#include <unistd.h>
 
 
 #define ERR(msg) std::cerr << "ERROR [" << __FILE_NAME__ << ":" << __LINE__ << "]: " << msg << std::endl
@@ -12,29 +13,25 @@
 #define ASSERT(cond, msg) do { if (!(cond)) { ERR(msg); std::abort(); } } while(0)
 
 
+FdiskContextDeleter::FdiskContextDeleter(bool* assigned)
+    : assigned_(assigned) {}
+
+
 void FdiskContextDeleter::operator()(struct fdisk_context* ctx) const {
-    if (ctx) {
-        if (fdisk_device_is_used(ctx)) {
+   if (ctx) {
+      if (assigned_ && *assigned_) {
+         if (fdisk_device_is_used(ctx)) {
             fdisk_deassign_device(ctx, 1);  // force cleanup
-        }
-        fdisk_unref_context(ctx);
-    }
+         }
+         *assigned_ = false;
+      }
+      fdisk_unref_context(ctx);
+   }
 }
-
-
-bool RPIparted::commit() {
-    if (fdisk_write_disklabel(context_.get()) != 0) {
-        ERR("Failed to write partition table to disk");
-        return false;
-    }
-    (void)fdisk_reread_partition_table(context_.get());
-    return true;
-}
-
 
 
 RPIparted::RPIparted()
-    : context_(fdisk_new_context(), FdiskContextDeleter()) {
+    : context_(fdisk_new_context(), FdiskContextDeleter(&device_assigned_)) {
     if (!context_) {
         throw std::runtime_error("Failed to create context");
     }
@@ -43,15 +40,25 @@ RPIparted::RPIparted()
 
 
 bool RPIparted::openDevice(const std::string& device_path, unsigned long align_kb) {
+   closeDevice();
+   context_.reset(fdisk_new_context());
+   if (!context_) {
+      ERR("Failed to create context");
+      return false;
+   }
+
    fdisk_disable_dialogs(context_.get(), 1);
 
    if (align_kb)
       fdisk_save_user_grain(context_.get(), align_kb * 1024);
 
    if (fdisk_assign_device(context_.get(), device_path.c_str(), 0)) {
+      device_assigned_ = false;
+      context_.reset();
       ERR("Failed to open device " << device_path);
       return false;
    }
+   device_assigned_ = true;;
 
    grain_ = fdisk_get_grain_size(context_.get());
 
@@ -68,6 +75,18 @@ bool RPIparted::openDevice(const std::string& device_path, unsigned long align_k
          is_gpt_ = true;
 
    return true;
+}
+
+
+void RPIparted::closeDevice() {
+   if (context_) {
+      if (device_assigned_ && fdisk_device_is_used(context_.get())) {
+         fdisk_deassign_device(context_.get(), 0);
+         device_assigned_ = false;
+      }
+      context_.reset(); // Destroys smart pointer's object, triggering deleter
+   }
+   return;
 }
 
 
@@ -99,7 +118,7 @@ bool RPIparted::createPartitionTable(const std::string& type, const std::optiona
 
    is_gpt_ = (type_lower == "gpt");
 
-   return commit();
+   return true;
 }
 
 
@@ -189,12 +208,11 @@ bool RPIparted::appendPartition(const uint64_t size_bytes, const std::string& ty
       return false;
    }
 
-   return commit();
+   return true;
 }
 
 
-bool RPIparted::removePartition(const size_t partnum)
-{
+bool RPIparted::removePartition(const size_t partnum) {
    if (!context_) {
       ERR("Bad context");
       return false;
@@ -211,5 +229,39 @@ bool RPIparted::removePartition(const size_t partnum)
       return false;
    }
 
-   return commit();
+   return true;
+}
+
+
+bool RPIparted::commit() {
+   if (!context_) {
+      ERR("Bad context");
+      return false;
+   }
+
+   int ret = fdisk_write_disklabel(context_.get());
+
+   if (ret) {
+      ERR("Error writing partition table: "
+            << errno << " (" << std::strerror(errno) << ")");
+   }
+
+   return (ret == 0) ? true : false;
+}
+
+
+bool RPIparted::rereadPartitionTable() {
+   if (!context_) {
+      ERR("Bad context");
+      return false;
+   }
+
+   int ret = fdisk_reread_partition_table(context_.get());
+
+   if (ret != 0) {
+      ERR("Error re-reading partition table: "
+            << errno << " (" << std::strerror(errno) << ")");
+   }
+
+   return (ret == 0) ? true : false;
 }
