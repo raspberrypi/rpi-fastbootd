@@ -6,6 +6,7 @@ project(asyncio VERSION 14.0.0)
 add_subdirectory(libasyncio)
 project(fastbootd VERSION 14.0.0 LANGUAGES C CXX)
 add_subdirectory(fastboot)
+add_subdirectory(rpiparted)
 
 # CPack directives
 set(CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/cmake")
