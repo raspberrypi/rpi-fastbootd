@@ -39,7 +39,7 @@ set(CPACK_DEBIAN_PACKAGE_ARCHITECTURE "arm64")
 set(CPACK_DEBIAN_PACKAGE_DEPENDS "android-liblog, android-libbase, zlib1g, android-libcutils, android-libsparse, libfdisk1, liburing2, libsystemd0, openssl, coreutils, xxd, sed, awk, raspi-utils-core")
 
 # cryptsetup-bin is needed for the oem commands 'cryptinit', 'cryptopen'
-set(CPACK_DEBIAN_PACKAGE_RECOMMENDS "cryptsetup-bin")
+set(CPACK_DEBIAN_PACKAGE_RECOMMENDS "cryptsetup-bin, gpiod")
 
 set(CPACK_COMPONENTS_GROUPING ALL_COMPONENTS_IN_ONE)
 
