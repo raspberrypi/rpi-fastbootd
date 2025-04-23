@@ -498,17 +498,20 @@ namespace {
         if (led.length() == 0 ||
             (led.length() != strspn(led.c_str(), LED_ALLOWED_CHARS)) ||
             (snprintf(led_device_path, PATH_MAX, LED_DEVICE_PATH "%s/brightness", led.c_str()) >= PATH_MAX))  {
-            return device->WriteFail("Incorrect LED device: " LED_USAGE);
+            device->WriteInfo("Could not find LED device: " LED_USAGE);
+            return device->WriteOkay("");
         }
 
         int led_device = open(led_device_path, O_WRONLY | O_TRUNC);
         if (led_device == -1) {
-            return device->WriteFail("Could not open LED device: " LED_USAGE);
+            device->WriteInfo("Could not open LED device: " LED_USAGE);
+            return device->WriteOkay("");
         }
 
         // Happy to let the kernel validate this for us
         if (value.length() != bulk_write(led_device, value.c_str(), value.length())) {
-            return device->WriteFail("Could not wite LED value.");
+            device->WriteInfo("Could not wite LED value.");
+            return device->WriteOkay("");
         } else {
             return device->WriteOkay("Wrote LED value");
         }
