@@ -16,6 +16,7 @@
 
 #include "variables.h"
 
+#include <algorithm>
 #include <cstring>
 #include <inttypes.h>
 #include <stdio.h>

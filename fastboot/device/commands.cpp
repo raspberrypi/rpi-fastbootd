@@ -20,6 +20,7 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 
+#include <algorithm>
 #include <unordered_set>
 
 #include <android-base/logging.h>
@@ -498,17 +499,20 @@ namespace {
         if (led.length() == 0 ||
             (led.length() != strspn(led.c_str(), LED_ALLOWED_CHARS)) ||
             (snprintf(led_device_path, PATH_MAX, LED_DEVICE_PATH "%s/brightness", led.c_str()) >= PATH_MAX))  {
-            return device->WriteFail("Incorrect LED device: " LED_USAGE);
+            device->WriteInfo("Could not find LED device: " LED_USAGE);
+            return device->WriteOkay("");
         }
 
         int led_device = open(led_device_path, O_WRONLY | O_TRUNC);
         if (led_device == -1) {
-            return device->WriteFail("Could not open LED device: " LED_USAGE);
+            device->WriteInfo("Could not open LED device: " LED_USAGE);
+            return device->WriteOkay("");
         }
 
         // Happy to let the kernel validate this for us
         if (value.length() != bulk_write(led_device, value.c_str(), value.length())) {
-            return device->WriteFail("Could not wite LED value.");
+            device->WriteInfo("Could not wite LED value.");
+            return device->WriteOkay("");
         } else {
             return device->WriteOkay("Wrote LED value");
         }
@@ -576,6 +580,33 @@ namespace {
         }
         return device->WriteStatus(FastbootResult::OKAY, "Write Successful!");
     }
+
+    static bool oem_cmd_gpioset(FastbootDevice* device, const std::vector<std::string>& args) {
+        if (args.size() < 3) {
+            return device->WriteFail("oem gpioset [OPTIONS] <line=value>...");
+        }
+
+        // Convert gpioset_args to char* array
+        std::vector<char *> argv_vec(args.size());
+        // Advance beyond 'oem'
+        auto itr = args.begin();
+        std::advance(itr, 1);
+        std::transform(itr, args.end(), argv_vec.begin(),
+                      [](const std::string& str) { return const_cast<char*>(str.c_str()); });
+        argv_vec[args.size() - 1] = NULL;
+        char * const *argv = argv_vec.data();
+
+        int subprocess_rc = -1;
+        int ret = rpi::process_spawn_blocking(&subprocess_rc, "gpioset", argv, NULL);
+
+        if (ret) {
+            return device->WriteFail(strerror(ret));
+        } else if (subprocess_rc) {
+            return device->WriteFail("gpioset failed");
+        }
+
+        return device->WriteOkay("gpioset completed.");
+    }
 } //namespace anonymous
 
 bool OemCmdHandler(FastbootDevice* device, const std::vector<std::string>& args) {
@@ -606,6 +637,8 @@ bool OemCmdHandler(FastbootDevice* device, const std::vector<std::string>& args)
         return oem_cmd_download_file(device, split_args);
     } else if (command_name == "upload-file") {
         return oem_cmd_upload_file(device, split_args);
+    } else if (command_name == "gpioset") {
+        return oem_cmd_gpioset(device, split_args);
     }
 
     return device->WriteFail("Unknown OEM command.");
