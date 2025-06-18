@@ -8,7 +8,10 @@
 #include <libfdisk/libfdisk.h>
 
 struct FdiskContextDeleter {
+    FdiskContextDeleter(bool* assigned);
     void operator()(struct fdisk_context* ctx) const;
+private:
+    bool* assigned_;
 };
 
 class RPIparted {
@@ -25,6 +28,13 @@ public:
      * @return True on success. False on failure.
      */
     bool openDevice(const std::string& device, unsigned long align_kb);
+
+    /**
+     * @brief Close a partitioning device
+     *
+     * @return None
+     */
+    void closeDevice();
 
     /**
      * @brief Write an empty partition table to the device
@@ -56,12 +66,32 @@ public:
      */
     bool removePartition(const size_t partnum);
 
+    /**
+     * @brief Write all partition table changes in memory to disk
+     *
+     * @return True on success. False on failure.
+     */
+    bool commit();
+
+    /**
+     * @brief Instruct the kernel to re-read the partition table on the device
+     *
+     * In order for this to succeed, there must be no open fds on the device
+     * from before the partition table was changed. Assuming rpiparted was
+     * exclusively used to perform partition table operations, closing and
+     * re-opening the device is essential to ensure the kernel is ready to
+     * re-read the partition table. Closing the device flushes all buffers and
+     * indicates that rpiparted is done with the old state.
+     *
+     * @return True on success. False on failure.
+     */
+    bool rereadPartitionTable();
 private:
     std::unique_ptr<struct fdisk_context, FdiskContextDeleter> context_;
     bool is_gpt_;
     size_t sector_size_;
     unsigned long grain_;
-    bool commit();
+    bool device_assigned_ = false;
 };
 
 #endif // RPIPARTED_H

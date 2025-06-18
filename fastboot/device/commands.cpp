@@ -50,6 +50,7 @@
 #include "utility.h"
 #include "storage_literals.h"
 #include "rpiparted.h"
+#include "idpdevice.h"
 
 #include <iostream>
 #include <fstream>
@@ -61,7 +62,7 @@ static constexpr bool kEnableFetch = true;
 static constexpr bool kEnableFetch = false;
 #endif
 
-#define KEYFILE "--key-file=/data/fastboot.key"
+#define KEYFILE "/data/fastboot.key"
 
 // using android::fs_mgr::MetadataBuilder;
 // using android::hal::CommandResult;
@@ -300,13 +301,21 @@ namespace {
         }
 
         // label_id is optional.
-        if (args.size() == 5)
+        if (args.size() == 5) {
            result = disk.createPartitionTable(disk_label.c_str(), args[4].c_str());
-        else
+        }
+        else {
            result = disk.createPartitionTable(disk_label.c_str(), std::nullopt);
+        }
 
-        if (!result)
-            return device->WriteStatus(FastbootResult::FAIL, "Failed to write the disk label. " PARTINIT_USAGE);
+        if (!result) {
+            return device->WriteStatus(FastbootResult::FAIL, "Failed to create disk label." PARTINIT_USAGE);
+        }
+
+        result = disk.commit();
+        if (!result) {
+            return device->WriteStatus(FastbootResult::FAIL, "Error writing PT." PARTINIT_USAGE);
+        }
 
         return device->WriteStatus(FastbootResult::OKAY, "Initialised partition successfully");
     }
@@ -360,7 +369,91 @@ namespace {
             return device->WriteStatus(FastbootResult::FAIL, "Failed to append partition. " PARTAPP_USAGE);
         }
 
+        if (!disk.commit()) {
+            return device->WriteStatus(FastbootResult::FAIL, "Error writing PT." PARTINIT_USAGE);
+        }
+
         return device->WriteStatus(FastbootResult::OKAY, "Wrote new partition.");
+    }
+
+    // oem idpinit
+    static bool oem_cmd_idp_init(FastbootDevice* device, const std::vector<std::string>& unused) {
+       int size = device->download_data().size();
+       char *ptr_data = device->download_data().data();
+
+       if (size == 0) {
+          return device->WriteFail("IDP:No data. Check description was staged");
+       }
+
+       if (device->idp) {
+          return device->WriteFail("IDP:already initialised");
+       }
+
+       device->idp = new IDPdevice(std::filesystem::path(KEYFILE));
+
+       if (!device->idp->Initialise(ptr_data, size)) {
+          return device->WriteFail("IDP:invalid description");
+       }
+
+       if (!device->idp->canProvision()) {
+          return device->WriteFail("IDP:cannot provision");
+       }
+
+       device->idpcookie = device->idp->createCookie();
+
+       return device->WriteOkay("IDP:ready");
+    }
+
+    // oem idpwrite
+    static bool oem_cmd_idp_write(FastbootDevice* device, const std::vector<std::string>& unused) {
+
+       if (!device->idp) {
+          return device->WriteFail("IDP:not initialised");
+       }
+
+       if (!device->idp->startProvision()) {
+          return device->WriteFail("IDP:failed to start provisioning");
+       }
+
+       return device->WriteOkay("IDP:ok");
+    }
+
+    // oem idpgetblk
+    static bool oem_cmd_idp_getblk(FastbootDevice* device, const std::vector<std::string>& unused) {
+       if (!device->idp) {
+          return device->WriteFail("IDP:not initialised");
+       }
+
+       auto bd = device->idp->getNextBlockDevice(*device->idpcookie);
+       if (bd) {
+          std::string blk = bd->blockDev;
+          const std::string prefix = "/dev/";
+
+          if (blk.rfind(prefix, 0) == 0) {
+             blk = blk.substr(prefix.length());
+          }
+          std::string str = blk + ":" + bd->simg;
+          device->WriteInfo(str);
+       }
+       return device->WriteOkay("IDP:done");
+    }
+
+    // oem idpdone
+    static bool oem_cmd_idp_done(FastbootDevice* device, const std::vector<std::string>& unused) {
+       if (!device->idp) {
+          return device->WriteOkay("IDP:not initialised");
+       }
+
+       bool result = device->idp->endProvision();
+
+       delete device->idp;
+       device->idp = nullptr;
+
+       if (result) {
+          return device->WriteOkay("IDP:done");
+       }
+
+       return device->WriteFail("IDP:error finalising");
     }
 
     // oem cryptinit <blkdev> <label>
@@ -407,6 +500,7 @@ namespace {
             const_cast<char *>(args[3].c_str()), //!< Inserted
             force_password,
             const_cast<char *>(block_device.c_str()), //!< Appended
+            (char*)"--key-file",
             keyfile,
             NULL
         };
@@ -448,6 +542,7 @@ namespace {
         char * const argv[] = {
             cryptsetup,
             luksOpen,
+            (char*)"--key-file",
             const_cast<char *>(KEYFILE),
             const_cast<char *>(block_device_path.c_str()),
             const_cast<char *>(mapped_name.c_str()),
@@ -639,6 +734,14 @@ bool OemCmdHandler(FastbootDevice* device, const std::vector<std::string>& args)
         return oem_cmd_upload_file(device, split_args);
     } else if (command_name == "gpioset") {
         return oem_cmd_gpioset(device, split_args);
+    } else if (command_name == "idpinit") {
+        return oem_cmd_idp_init(device, split_args);
+    } else if (command_name == "idpwrite") {
+        return oem_cmd_idp_write(device, split_args);
+    } else if (command_name == "idpgetblk") {
+        return oem_cmd_idp_getblk(device, split_args);
+    } else if (command_name == "idpdone") {
+        return oem_cmd_idp_done(device, split_args);
     }
 
     return device->WriteFail("Unknown OEM command.");

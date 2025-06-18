@@ -95,6 +95,43 @@ static int append_gpt(RPIparted * disk)
 }
 
 
+static int test01(RPIparted& disk, std::string ptype, std::string device)
+{
+   int ret = -1;
+
+   std::cout << "Creating new partition table without label ID..." << std::endl;
+   if (!disk.createPartitionTable(ptype, std::nullopt)) {
+      std::cerr << "Failed to create partition table of type " << ptype  <<  std::endl;
+      return -1;
+   }
+
+   if (ptype == "gpt") {
+      std::cout << "Creating new GPT table with label ID..." << std::endl;
+      if (!disk.createPartitionTable(ptype, "3f671466-0e3f-4d4e-9c39-2cefc7be395c")) {
+         std::cerr << "Failed to create partition table." << std::endl;
+         return -1;
+      }
+      ret = append_gpt(&disk);
+   }
+
+   if (ptype == "dos" || ptype == "mbr") {
+      std::cout << "Creating new MBR table with label ID..." << std::endl;
+      if (!disk.createPartitionTable(ptype, "0x12345678")) {
+         std::cerr << "Failed to create partition table." << std::endl;
+         return -1;
+      }
+      ret = append_dos(&disk);
+   }
+
+   // Write table to disk
+   if (ret == 0)
+      ret = disk.commit() ? 0 : -1;
+
+   return ret;
+}
+
+
+
 int main(int argc, char* argv[]) {
    if (argc != 3) {
       std::cerr << "Usage: " << argv[0] << " <device> <dos|gpt>" << std::endl;
@@ -107,32 +144,28 @@ int main(int argc, char* argv[]) {
    int ret = -1;
 
    if (!disk.openDevice(device, ALIGN)) {
-      std::cerr << "Failed to open " << device << std::endl;
-      return 1;
+      std::cerr << "Failed to open(1) " << device << std::endl;
+      return -1;
    }
 
-   std::cout << "Creating new partition table without label ID..." << std::endl;
-   if (!disk.createPartitionTable(ptype, std::nullopt)) {
-      std::cerr << "Failed to create partition table of type " << ptype  <<  std::endl;
-      return 1;
-   }
+   ret = test01(disk, ptype, device);
+   if (ret)
+      std::cerr << "Error " << device << std::endl;
 
-   if (ptype == "gpt") {
-      std::cout << "Creating new GPT table with label ID..." << std::endl;
-      if (!disk.createPartitionTable(ptype, "3f671466-0e3f-4d4e-9c39-2cefc7be395c")) {
-         std::cerr << "Failed to create partition table." << std::endl;
-         return 1;
+   disk.closeDevice();
+
+   // Repeat
+   if (ret == 0) {
+      if (!disk.openDevice(device, ALIGN)) {
+         std::cerr << "Failed to open(2) " << device << std::endl;
+         return -1;
       }
-      ret = append_gpt(&disk);
-   }
 
-   if (ptype == "dos" || ptype == "mbr") {
-      std::cout << "Creating new MBR table with label ID..." << std::endl;
-      if (!disk.createPartitionTable(ptype, "0x12345678")) {
-         std::cerr << "Failed to create partition table." << std::endl;
-         return 1;
-      }
-      ret = append_dos(&disk);
+      ret = test01(disk, ptype, device);
+      if (ret)
+         std::cerr << "Error " << device << std::endl;
+
+      disk.closeDevice();
    }
 
    std::cout << "Tests complete: result " << ret << std::endl;
