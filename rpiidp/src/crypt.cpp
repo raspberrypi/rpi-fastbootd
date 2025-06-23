@@ -126,6 +126,9 @@ std::vector<std::string>  IDPluks::luks2createcmd(std::string_view blkdev, std::
    if (label && !label->empty())
       args.push_back("--label=" + *label);
 
+   if (uuid && !uuid->empty())
+      args.push_back("--uuid=" + *uuid);
+
    args.push_back(std::string(blkdev));
 
    return args;

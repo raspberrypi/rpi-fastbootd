@@ -60,6 +60,14 @@ namespace Validation {
       }
 
       // Optional fields
+      if (luks.isMember("label") && !(luks["label"].isString())) {
+         nr.error("LUKS key label is not a string.");
+         return nr;
+      }
+      if (luks.isMember("uuid") && !(luks["uuid"].isString())) {
+         nr.error("LUKS key uuid is not a string.");
+         return nr;
+      }
 
       // These checks are not for device level validation. They're for sanity
       // checking the parsing only. Device validation may reject a provisioning
@@ -360,8 +368,11 @@ std::shared_ptr<Partition> PartitionNavigator::createEncryptedPartition(
       luksConfig.etype = IDPluks::encap_type::Partitioned;
 
    // Optional fields
-   if (luks.isMember("label") && luks["label"].isString()) {
+   if (luks.isMember("label")) {
       luksConfig.label = luks["label"].asString();
+   }
+   if (luks.isMember("uuid")) {
+      luksConfig.uuid = luks["uuid"].asString();
    }
 
    encryptedPartition->luks = luksConfig;
