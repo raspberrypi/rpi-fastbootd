@@ -60,6 +60,14 @@ namespace Validation {
       }
 
       // Optional fields
+      if (luks.isMember("label") && !(luks["label"].isString())) {
+         nr.error("LUKS key label is not a string.");
+         return nr;
+      }
+      if (luks.isMember("uuid") && !(luks["uuid"].isString())) {
+         nr.error("LUKS key uuid is not a string.");
+         return nr;
+      }
 
       // These checks are not for device level validation. They're for sanity
       // checking the parsing only. Device validation may reject a provisioning
@@ -80,21 +88,37 @@ namespace Validation {
          return nr;
       }
 
-      if (node.isMember("role")) {
-         if (!node["role"].isString()) {
-            nr.error("Partition role is not a string");
-            return nr;
-         }
-      }
+      // Regular partitions can provide static information. IDP currently doesn't
+      // use this, so validate with a light touch.
+      if (node.isMember("static")) {
+         const std::set<std::string> validRoles = {"boot", "system"};
 
-      if (node.isMember("id")) {
-         if (!node["id"].isString()) {
-            nr.error("Partition id is not a string");
+         Json::Value snode = node["static"];
+
+         if (snode.isMember("role")) {
+            if (!snode["role"].isString()) {
+               nr.error("Partition role must be a string");
+               return nr;
+            }
+         }
+
+         if (validRoles.find(snode["role"].asString()) == validRoles.end()) {
+            nr.error("Unsupported partition role.");
             return nr;
          }
-      } else {
-         if (node.isMember("role")) {
-            nr.error("Partition id is required with role");
+
+         if (snode.isMember("id")) {
+            if (!snode["id"].isString()) {
+               nr.error("Partition id must be a string");
+               return nr;
+            }
+         }
+
+         if (snode.isMember("uuid")) {
+            if (!snode["uuid"].isString()) {
+               nr.error("Partition uuid must be a string");
+               return nr;
+            }
          }
       }
 
@@ -324,11 +348,17 @@ NavResult PartitionNavigator::processRegularPartitions(
 
       partition->image = p["image"].asString();
 
-      if (p.isMember("id"))
-         partition->id = p["id"].asString();
+      if (p.isMember("static")) {
+         Json::Value s = p["static"];
+         if (s.isMember("id"))
+            partition->id = s["id"].asString();
 
-      if (p.isMember("role"))
-         partition->role = p["role"].asString();
+         if (s.isMember("role"))
+            partition->role = s["role"].asString();
+
+         if (s.isMember("uuid"))
+            partition->uuid = s["uuid"].asString();
+      }
 
       partition->parent = parentPartition;
       partition->navigator = shared_from_this();
@@ -360,8 +390,11 @@ std::shared_ptr<Partition> PartitionNavigator::createEncryptedPartition(
       luksConfig.etype = IDPluks::encap_type::Partitioned;
 
    // Optional fields
-   if (luks.isMember("label") && luks["label"].isString()) {
+   if (luks.isMember("label")) {
       luksConfig.label = luks["label"].asString();
+   }
+   if (luks.isMember("uuid")) {
+      luksConfig.uuid = luks["uuid"].asString();
    }
 
    encryptedPartition->luks = luksConfig;

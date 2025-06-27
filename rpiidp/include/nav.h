@@ -16,12 +16,13 @@ class PartitionNavigator;
 struct Partition {
     std::string image; // tag to look up image object
     std::optional<std::string> id;
+    std::optional<std::string> uuid;
+    std::optional<std::string> role;
     std::string img_name;
     std::uint64_t img_size;
     std::string simg_name;
     unsigned int order;
     std::string pcode;
-    std::optional<std::string> role;
     std::optional<IDPluks> luks;
     std::shared_ptr<const PartitionNavigator> navigator;
     std::shared_ptr<const Partition> parent;

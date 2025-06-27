@@ -22,6 +22,7 @@ struct IDPluks {
     std::size_t sector_size = 512;
     std::string mname;
     std::optional<std::string> label;
+    std::optional<std::string> uuid;
 
     // Optional overrides
     std::optional<std::size_t> payloadOffsetSectors; // LUKS1
