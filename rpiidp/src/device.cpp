@@ -150,7 +150,12 @@ std::uint64_t IDPstorage::alignUp(std::uint64_t size) const
       return 0;
 
    std::uint64_t align64 = static_cast<std::uint64_t>(ptable_align);
-   return (size + align64 - 1) / align64 * align64;
+
+   if (size > (UINT64_MAX - align64 + 1)) {
+      throw std::overflow_error("Size too large for alignment");
+   }
+
+   return ((size + align64 - 1) / align64) * align64;
 }
 
 
@@ -564,13 +569,20 @@ bool IDPdeviceWriter::WritePhysicalPartitions()
    for (auto& part : device_->partitions_) {
       if (part.getParentIndex() == -1) {
 
+         // When computing the size of a partition, ensure everything uses
+         // aligned sizes. This is especially important if sizing a LUKS
+         // container which can have any number of encapsulated children.
+         uint64_t sz = part.getSize(true, device_->partitions_);
+
          msg = ("Creating p" +
                std::to_string(part.num) +
                " on " +
-               device_->image_.device_storage.BlockDev()); MSG(msg);
+               device_->image_.device_storage.BlockDev() +
+               " size (bytes) " +
+               std::to_string(sz)); MSG(msg);
 
          // API auto aligns
-         ret = parted.appendPartition(part.getSize(false, device_->partitions_), *part.pcode);
+         ret = parted.appendPartition(sz, *part.pcode);
 
          if (!ret)
             break;
@@ -642,12 +654,16 @@ bool IDPdeviceWriter::InitCryptPartitions()
             // Create GPT on the LUKS block device if using a partitioned scheme
             if (part.luks->etype == IDPluks::encap_type::Partitioned) {
                RPIparted parted;
+               std::string msg;
 
                bool ret = parted.openDevice(part.luks->BlockDev(0),
                      device_->image_.device_storage.ptable_align / 1024);
 
                if (!ret)
                   break;
+
+               msg = ("Creating new GPT partition table on " +
+                     part.luks->BlockDev(0)); MSG(msg);
 
                ret = parted.createPartitionTable("GPT", std::nullopt);
 
@@ -660,8 +676,16 @@ bool IDPdeviceWriter::InitCryptPartitions()
                for (auto& child : device_->partitions_) {
                   if (child.getParentIndex() == part.getIndex() &&
                         child.isEncrypted(device_->partitions_)) {
-                     ret = parted.appendPartition(child.getSize(false, device_->partitions_),
-                           *child.pcode);
+                     uint64_t sz = child.getSize(false, device_->partitions_);
+
+                     msg = ("Creating p" +
+                           std::to_string(child.num) +
+                           " on " +
+                           part.luks->BlockDev(0) +
+                           " size (bytes) " +
+                           std::to_string(sz)); MSG(msg);
+
+                     ret = parted.appendPartition(sz,*child.pcode);
                   }
                   if (!ret)
                      break;
