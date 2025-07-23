@@ -408,37 +408,41 @@ bool GetSignedOtp(FastbootDevice* /* device */, const std::vector<std::string>& 
 
 bool GetSecure(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
                std::string* message) {
-    posix_spawn_file_actions_t action;
-    posix_spawn_file_actions_init(&action);
-    posix_spawn_file_actions_addopen (&action, STDOUT_FILENO, "/tmp/has-private-key.log", O_WRONLY|O_CREAT, 0);
-    posix_spawn_file_actions_adddup2(&action, STDOUT_FILENO, STDERR_FILENO);
-
+    pid_t pid;
     char *arg[] = {"/usr/local/bin/rpi-otp-private-key", "-c", NULL};
-    int subprocess_rc = -1;
-    int ret = rpi::process_spawn_blocking(&subprocess_rc, "/usr/local/bin/rpi-otp-private-key", arg, NULL, &action);
-    posix_spawn_file_actions_destroy(&action);
+    int ret;
+    int wstatus;
+    ret = posix_spawnp(&pid, "/usr/local/bin/rpi-otp-private-key", NULL, NULL, arg, NULL);
 
-    if (ret)
-    {
-        *message = strerror(errno);
+    if (ret) {
+        *message = strerror(ret);
+        return false;
     }
-    else if (subprocess_rc)
-    {
-        *message = "unknown";
-    }
-    else
-    {
-        std::string has_private_key = {};
-        android::base::ReadFileToString("/tmp/has-private-key.log", &has_private_key);
-        if (has_private_key.find("1") != std::string::npos)
-        {
-            *message = "yes";
+
+    do {
+        ret = waitpid(pid, &wstatus, 0);
+        if (ret == -1) {
+            *message = "waitpid failed";
+            return false;
         }
-        else
-        {
-            *message = "no";
+    } while (!WIFEXITED(wstatus) && !WIFSIGNALED(wstatus));
+
+    // Check the exit status of rpi-otp-private-key -c
+    // Exit code 0 = key is set (non-zero), return "yes"
+    // Exit code 1 = key is all zeros (not set), return "no"
+    if (WIFEXITED(wstatus)) {
+        int exit_status = WEXITSTATUS(wstatus);
+        if (exit_status == 0) {
+            *message = "yes";  // Key is set
+        } else if (exit_status == 1) {
+            *message = "no";   // Key is not set (all zeros)
+        } else {
+            *message = "error"; // Unexpected exit code
         }
+    } else {
+        *message = "error";  // Process terminated abnormally
     }
+    
     return true;
 }
 
