@@ -8,21 +8,25 @@ if /usr/local/bin/rpi-otp-private-key -c; then
 else
     printf "no\r\n" > /data/privkey-already-set
     # Generate a key!
-    [ ! -f /etc/rpi-no-generate-duk ] && /usr/local/bin/rpi-otp-private-key -y -w "$(openssl genpkey -algorithm ed25519 -outform DER | dd bs=16 skip=1 count=2 2>/dev/null | xxd -c 128 -p | tr -d '\n')"
+	openssl ecparam -name prime256v1 -genkey -noout -out private_key.pem
+	openssl ec -in private_key.pem -text -noout | awk '/priv:/{flag=1; next} /pub:/{flag=0} flag' | tr -d ' \n:' | head -n1 > d.hex
+    [ ! -f /etc/rpi-no-generate-duk ] && /usr/local/bin/rpi-otp-private-key -y -w "$(cat d.hex)"
+
 fi
 
-# Use base64 encoded private key as LUKS passphrase
 PRIVATE_KEY=$(/usr/local/bin/rpi-otp-private-key -b | base64 -w0)
-if [ -n "${PRIVATE_KEY}" ]; then
-	printf "%s" "${PRIVATE_KEY}" > /data/fastboot.key
-	printf "%s\r\n" "${PRIVATE_KEY}" > /data/private.key
+# Create a complete EC private key structure that OpenSSL can use
+PRIVKEY_HEX=$(echo "${PRIVATE_KEY}" | base64 -d | xxd -p -c 32 | tr -d '\n')
 
-	# Apply correct ed25519 DER header to generate compliant private key
-	{
-	    printf MC4CAQAwBQYDK2VwBCIEIA== | base64 -d -
-	    base64 -d /data/fastboot.key
-	} > /data/key.der
+# Generate a template and replace the private key portion
+openssl ecparam -name prime256v1 -genkey -noout -out /tmp/template.pem
+TEMPLATE_HEX=$(openssl ec -in /tmp/template.pem -text -noout | grep -A 3 "priv:" | tail -n +2 | tr -d ' \n:')
 
-	# Generate public key
-	printf "%s\r\n" "$(openssl pkey -in /data/key.der -inform DER -pubout | sed '/PUBLIC/d' | tr -d '\n')" > /data/key.pub
-fi
+# Replace the template's private key portion
+sed "s/${TEMPLATE_HEX}/${PRIVKEY_HEX}/g" /tmp/template.pem > /tmp/tempkey.pem
+
+# Generate public key
+openssl ec -in /tmp/tempkey.pem -pubout -out /data/key.pub
+
+# Cleanup
+rm -f /tmp/template.pem /tmp/tempkey.pem
