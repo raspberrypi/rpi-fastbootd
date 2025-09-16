@@ -182,6 +182,139 @@ static bool GetVarAll(FastbootDevice* device) {
     return true;
 }
 
+// Helper to read a file and return its contents as a string
+static std::string readSysFile(const std::string& path) {
+    std::ifstream file(path);
+    if (!file.is_open()) {
+        return "";
+    }
+    
+    std::string content;
+    std::getline(file, content);
+    
+    // Remove any trailing whitespace/newlines
+    content.erase(content.find_last_not_of(" \n\r\t") + 1);
+    
+    return content;
+}
+
+// Helper to check if a path exists
+static bool pathExists(const std::string& path) {
+    struct stat buffer;
+    return (stat(path.c_str(), &buffer) == 0);
+}
+
+static std::string getDeviceId(const std::string& block_device) {
+    std::string device = block_device;
+    if (device.find("/dev/") == 0) {
+        device = device.substr(5);
+    }
+    
+    // Extract base device name (remove partition)
+    std::string base_device = device;
+    if (device.find("mmcblk") != std::string::npos) {
+        size_t p_pos = device.find("p");
+        if (p_pos != std::string::npos) {
+            base_device = device.substr(0, p_pos);
+        }
+    } else if (device.find("nvme") != std::string::npos) {
+        size_t p_pos = device.find_last_of("p");
+        if (p_pos != std::string::npos) {
+            base_device = device.substr(0, p_pos);
+        }
+    } else {
+        // SATA/SCSI: sda1 -> sda
+        while (!base_device.empty() && std::isdigit(base_device.back())) {
+            base_device.pop_back();
+        }
+    }
+    
+    std::string sys_block_path = "/sys/class/block/" + base_device;
+    
+    // Try MMC/SD Card CID first
+    std::string device_id = readSysFile(sys_block_path + "/device/cid");
+    if (!device_id.empty()) {
+        return device_id;
+    }
+    
+    // Try NVMe EUI
+    device_id = readSysFile(sys_block_path + "/eui");
+    if (!device_id.empty()) {
+        return device_id;
+    }
+    
+    // Try device serial
+    device_id = readSysFile(sys_block_path + "/device/serial");
+    if (!device_id.empty()) {
+        return device_id;
+    }
+    
+    // Check if this is a USB device - return error
+    if (pathExists(sys_block_path + "/device")) {
+        char resolved_path[PATH_MAX];
+        std::string device_link = sys_block_path + "/device";
+        if (realpath(device_link.c_str(), resolved_path) != nullptr) {
+            std::string device_path = resolved_path;
+            if (device_path.find("/usb") != std::string::npos) {
+                return "ERROR_USB_NOT_SUPPORTED";
+            }
+        }
+    }
+    
+    return "";
+}
+
+static std::string executeCommand(const std::string& command) {
+    FILE* pipe = popen(command.c_str(), "r");
+    if (!pipe) {
+        return "";
+    }
+    
+    std::string result;
+    char buffer[128];
+    while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+        result += buffer;
+    }
+    pclose(pipe);
+    
+    if (!result.empty() && result.back() == '\n') {
+        result.pop_back();
+    }
+    
+    return result;
+}
+
+// LUKS key generation from hardware device ID using rpi-fw-crypto
+static std::string generateLuksKeyFromPartition(const std::string& block_device) {
+    std::string device_id = getDeviceId(block_device);
+    
+    if (device_id.empty()) {
+        return "";
+    }
+    
+    if (device_id == "ERROR_USB_NOT_SUPPORTED") {
+        return "ERROR_USB_NOT_SUPPORTED";
+    }
+    
+    // Write device ID to temp file
+    std::string temp_file = "/tmp/device_id.txt";
+    std::ofstream outfile(temp_file);
+    if (!outfile) {
+        return "";
+    }
+    outfile << device_id;
+    outfile.close();
+    
+    // Use rpi-fw-crypto to calculate HMAC
+    std::string hmac_cmd = "rpi-fw-crypto hmac --in " + temp_file + " --key-id 1 --outform hex";
+    std::string hmac_result = executeCommand(hmac_cmd);
+    
+    // Clean up temp file
+    std::remove(temp_file.c_str());
+    
+    return hmac_result;
+}
+
 static void PostWipeData() {
     std::string err;
     // Reset mte state of device.
@@ -474,12 +607,31 @@ namespace {
             return device->WriteFail("Label not specified. Usage: oem cryptinit <block_device> <label>");
         }
 
+        // Generate hardware-based LUKS key
+        std::string luks_key = generateLuksKeyFromPartition(block_device);
+        if (luks_key.empty()) {
+            return device->WriteFail("Cannot generate LUKS key - unsupported device type");
+        }
+        if (luks_key == "ERROR_USB_NOT_SUPPORTED") {
+            return device->WriteFail("USB devices not supported for LUKS encryption");
+        }
+
+        // Write key to temporary file
+        std::string temp_keyfile = "/tmp/luks_key.tmp";
+        std::ofstream keyfile_stream(temp_keyfile);
+        if (!keyfile_stream) {
+            return device->WriteFail("Cannot create temporary keyfile");
+        }
+        keyfile_stream << luks_key;
+        keyfile_stream.close();
+
         PartitionHandle handle;
         if (!OpenPartition(device, block_device, &handle, O_WRONLY | O_DIRECT)) {
+            std::remove(temp_keyfile.c_str());
             return device->WriteFail("Cannot create context for device " + block_device + " as failed to open");
         }
 
-	    std::string cipher = "--cipher=aes-xts-plain64";
+        std::string cipher = "--cipher=aes-xts-plain64";
 
         if (args.size() >= 5)
             cipher = "--cipher=" + args[4];
@@ -489,7 +641,6 @@ namespace {
         char luksFormat[]     = "luksFormat";
         char label[]          = "--label";
         char force_password[] = "--force-password";
-        char keyfile[]        = KEYFILE;
 
         char * const argv[] = {
             cryptsetup,
@@ -501,12 +652,15 @@ namespace {
             force_password,
             const_cast<char *>(block_device.c_str()), //!< Appended
             (char*)"--key-file",
-            keyfile,
+            const_cast<char *>(temp_keyfile.c_str()),
             NULL
         };
 
         int subprocess_rc = -1;
         int ret = rpi::process_spawn_blocking(&subprocess_rc, "cryptsetup", argv, NULL);
+
+        // Clean up temporary keyfile
+        std::remove(temp_keyfile.c_str());
 
         if (ret) {
             return device->WriteFail(strerror(ret));
@@ -526,13 +680,33 @@ namespace {
         auto mapped_name = args[3];
         block_device_path.insert(0, "/dev/");
 
+        // Generate hardware-based LUKS key
+        std::string luks_key = generateLuksKeyFromPartition(block_device_path);
+        if (luks_key.empty()) {
+            return device->WriteFail("Cannot generate LUKS key - unsupported device type");
+        }
+        if (luks_key == "ERROR_USB_NOT_SUPPORTED") {
+            return device->WriteFail("USB devices not supported for LUKS encryption");
+        }
+
+        // Write key to temporary file
+        std::string temp_keyfile = "/tmp/luks_key_open.tmp";
+        std::ofstream keyfile_stream(temp_keyfile);
+        if (!keyfile_stream) {
+            return device->WriteFail("Cannot create temporary keyfile");
+        }
+        keyfile_stream << luks_key;
+        keyfile_stream.close();
+
         PartitionHandle handle;
         if (!OpenPartition(device, block_device_path, &handle, O_WRONLY | O_DIRECT)) {
+            std::remove(temp_keyfile.c_str());
             return device->WriteFail("Cannot perform cryptopen for device " + block_device_path + " as failed to open.");
         }
 
         // Will appear as /dev/disk/by-label/<part_label> once opened
         if (args[3].empty()) {
+            std::remove(temp_keyfile.c_str());
             return device->WriteFail("Cannot perform cryptopen for device " + block_device_path + " as no mapped name specified.");
         }
 
@@ -543,7 +717,7 @@ namespace {
             cryptsetup,
             luksOpen,
             (char*)"--key-file",
-            const_cast<char *>(KEYFILE),
+            const_cast<char *>(temp_keyfile.c_str()),
             const_cast<char *>(block_device_path.c_str()),
             const_cast<char *>(mapped_name.c_str()),
             NULL
@@ -551,6 +725,9 @@ namespace {
 
         int subprocess_rc = -1;
         int ret = rpi::process_spawn_blocking(&subprocess_rc, "cryptsetup", argv, NULL);
+
+        // Clean up temporary keyfile
+        std::remove(temp_keyfile.c_str());
 
         if (ret) {
             return device->WriteFail(strerror(ret));
