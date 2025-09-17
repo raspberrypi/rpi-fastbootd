@@ -734,10 +734,93 @@ namespace {
         } else if (subprocess_rc) {
             return device->WriteFail("cryptsetup luksOpen failed.");
         }
-        return device->WriteOkay("cryptsetup luksOpen completed.");
+    return device->WriteOkay("cryptsetup luksOpen completed.");
+}
+
+// oem cryptsetpassword <blkdev> <passphrase>
+static bool oem_cmd_cryptsetpassword(FastbootDevice* device, const std::vector<std::string>& args) {
+    if (args.size() < 4) {
+        return device->WriteFail("Usage: oem cryptsetpassword <block_device> <passphrase>");
     }
 
-    ssize_t bulk_write(int bulk_in, const char *buf, size_t length)
+    std::string block_device = args[2];
+    std::string user_passphrase = args[3];
+    block_device.insert(0, "/dev/");
+
+    std::string luks_key = generateLuksKeyFromPartition(block_device);
+    if (luks_key.empty()) {
+        return device->WriteFail("Cannot generate LUKS key - unsupported device type");
+    }
+    if (luks_key == "ERROR_USB_NOT_SUPPORTED") {
+        return device->WriteFail("USB devices not supported for LUKS encryption");
+    }
+
+    std::string temp_hw_keyfile = "/tmp/luks_hw_key.tmp";
+    std::ofstream hw_keyfile_stream(temp_hw_keyfile);
+    if (!hw_keyfile_stream) {
+        return device->WriteFail("Cannot create temporary hardware keyfile");
+    }
+    hw_keyfile_stream << luks_key;
+    hw_keyfile_stream.close();
+
+    if (user_passphrase.empty()) {
+        char cryptsetup[] = "cryptsetup";
+        char luksKillSlot[] = "luksKillSlot";
+        char * const argv[] = {
+            cryptsetup, luksKillSlot, (char*)"--key-file",
+            const_cast<char *>(temp_hw_keyfile.c_str()),
+            const_cast<char *>(block_device.c_str()), (char*)"1", NULL
+        };
+        int subprocess_rc = -1;
+        int ret = rpi::process_spawn_blocking(&subprocess_rc, "cryptsetup", argv, NULL);
+        std::remove(temp_hw_keyfile.c_str());
+        if (ret != 0 || subprocess_rc != 0) {
+            return device->WriteFail("Failed to remove user passphrase");
+        }
+        return device->WriteOkay("User passphrase removed.");
+    }
+
+    std::string temp_user_keyfile = "/tmp/luks_user_key.tmp";
+    std::ofstream user_keyfile_stream(temp_user_keyfile);
+    if (!user_keyfile_stream) {
+        std::remove(temp_hw_keyfile.c_str());
+        return device->WriteFail("Cannot create temporary user keyfile");
+    }
+    user_keyfile_stream << user_passphrase;
+    user_keyfile_stream.close();
+
+    char cryptsetup_kill[] = "cryptsetup";
+    char luksKillSlot[] = "luksKillSlot";
+    char * const kill_argv[] = {
+        cryptsetup_kill, luksKillSlot, (char*)"--key-file",
+        const_cast<char *>(temp_hw_keyfile.c_str()),
+        const_cast<char *>(block_device.c_str()), (char*)"1", NULL
+    };
+    int kill_subprocess_rc = -1;
+    rpi::process_spawn_blocking(&kill_subprocess_rc, "cryptsetup", kill_argv, NULL);
+
+    char cryptsetup[] = "cryptsetup";
+    char luksAddKey[] = "luksAddKey";
+    char * const argv[] = {
+        cryptsetup, luksAddKey, (char*)"--key-file",
+        const_cast<char *>(temp_hw_keyfile.c_str()), (char*)"--key-slot", (char*)"1",
+        const_cast<char *>(block_device.c_str()),
+        const_cast<char *>(temp_user_keyfile.c_str()), NULL
+    };
+
+    int subprocess_rc = -1;
+    int ret = rpi::process_spawn_blocking(&subprocess_rc, "cryptsetup", argv, NULL);
+
+    std::remove(temp_hw_keyfile.c_str());
+    std::remove(temp_user_keyfile.c_str());
+
+    if (ret != 0 || subprocess_rc != 0) {
+        return device->WriteFail("Failed to set user passphrase");
+    }
+    return device->WriteOkay("User passphrase set.");
+}
+
+ssize_t bulk_write(int bulk_in, const char *buf, size_t length)
     {
         size_t count = 0;
         ssize_t ret;
@@ -901,6 +984,8 @@ bool OemCmdHandler(FastbootDevice* device, const std::vector<std::string>& args)
         return oem_cmd_cryptinit(device, split_args);
     } else if (command_name == "cryptopen") {
         return oem_cmd_cryptopen(device, split_args);
+    } else if (command_name == "cryptsetpassword") {
+        return oem_cmd_cryptsetpassword(device, split_args);
     } else if (command_name == "partinit") {
         return oem_cmd_partinit(device, split_args);
     } else if (command_name == "partapp") {
