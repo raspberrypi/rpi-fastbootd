@@ -574,7 +574,15 @@ bool IDPdeviceWriter::WritePhysicalPartitions()
          // container which can have any number of encapsulated children.
          PartitionAttributes attrs{};
          attrs.size_bytes = part.getSize(true, device_->partitions_);
-         attrs.type_id    = *part.pcode;
+         attrs.type_id = *part.typecode;
+
+         // Optional GPT attributes
+         if (device_->image_.device_storage.ptable_type == IDPptable_type::GPT) {
+            if (part.gptlabel)
+               attrs.partlabel = *part.gptlabel;
+            if (part.gptuuid)
+               attrs.partuuid = *part.gptuuid;
+         }
 
          msg = ("Creating p" +
                std::to_string(part.num) +
@@ -681,7 +689,15 @@ bool IDPdeviceWriter::InitCryptPartitions()
                         child.isEncrypted(device_->partitions_)) {
                      PartitionAttributes attrs{};
                      attrs.size_bytes = child.getSize(false, device_->partitions_);
-                     attrs.type_id    = *child.pcode;
+                     attrs.type_id    = *child.typecode;
+
+                     // Optional GPT attributes
+                     if (device_->image_.device_storage.ptable_type == IDPptable_type::GPT) {
+                        if (child.gptlabel)
+                           attrs.partlabel = *child.gptlabel;
+                        if (child.gptuuid)
+                           attrs.partuuid = *child.gptuuid;
+                     }
 
                      msg = ("Creating p" +
                            std::to_string(child.num) +

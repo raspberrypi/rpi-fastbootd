@@ -42,11 +42,19 @@ void printp(const IDPpartition* p, const std::vector<IDPpartition>& all, unsigne
           MSG_INDENT(indent, "Partition: [clear]");
        }
        MSG_INDENT(indent, " num " << p->num);
-       MSG_INDENT(indent, " part code " << *p->pcode);
-       MSG_INDENT(indent, " img " << *p->img);
-       MSG_INDENT(indent, " simg " << *p->simg);
+       if (p->typecode)
+          MSG_INDENT(indent, " part code " << *p->typecode);
+       if (p->img)
+          MSG_INDENT(indent, " img " << *p->img);
+       if (p->simg)
+          MSG_INDENT(indent, " simg " << *p->simg);
        MSG_INDENT(indent, " sz " << p->size);
        MSG_INDENT(indent, " aligned sz " << p->aligned_size);
+       if (p->gptlabel)
+          MSG_INDENT(indent, " label(gpt) " << *p->gptlabel);
+       if (p->gptuuid)
+          MSG_INDENT(indent, " uuid(gpt) " << *p->gptuuid);
+
     }
 
     if (p->hasChildren(all)) {

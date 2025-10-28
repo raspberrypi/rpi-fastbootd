@@ -23,6 +23,8 @@ struct Partition {
     std::string simg_name;
     unsigned int order;
     std::string pcode;
+    std::optional<std::string> plabel;
+    std::optional<std::string> puuid;
     std::optional<IDPluks> luks;
     std::shared_ptr<const PartitionNavigator> navigator;
     std::shared_ptr<const Partition> parent;

@@ -21,7 +21,9 @@ struct IDPpartition {
     std::optional<std::string> simg;
     std::uint64_t size;
     std::uint64_t aligned_size;
-    std::optional<std::string> pcode;
+    std::optional<std::string> typecode;
+    std::optional<std::string> gptlabel;
+    std::optional<std::string> gptuuid;
     std::optional<IDPluks> luks;
 
     bool isCryptContainer() const { return luks.has_value(); }
