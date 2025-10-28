@@ -572,17 +572,20 @@ bool IDPdeviceWriter::WritePhysicalPartitions()
          // When computing the size of a partition, ensure everything uses
          // aligned sizes. This is especially important if sizing a LUKS
          // container which can have any number of encapsulated children.
-         uint64_t sz = part.getSize(true, device_->partitions_);
+         PartitionAttributes attrs{};
+         attrs.size_bytes = part.getSize(true, device_->partitions_);
+         attrs.type_id    = *part.pcode;
 
          msg = ("Creating p" +
                std::to_string(part.num) +
                " on " +
                device_->image_.device_storage.BlockDev() +
                " size (bytes) " +
-               std::to_string(sz)); MSG(msg);
+               std::to_string(attrs.size_bytes) +
+              " type " + attrs.type_id); MSG(msg);
 
          // API auto aligns
-         ret = parted.appendPartition(sz, *part.pcode);
+         ret = parted.appendPartition(attrs);
 
          if (!ret)
             break;
@@ -676,16 +679,19 @@ bool IDPdeviceWriter::InitCryptPartitions()
                for (auto& child : device_->partitions_) {
                   if (child.getParentIndex() == part.getIndex() &&
                         child.isEncrypted(device_->partitions_)) {
-                     uint64_t sz = child.getSize(false, device_->partitions_);
+                     PartitionAttributes attrs{};
+                     attrs.size_bytes = child.getSize(false, device_->partitions_);
+                     attrs.type_id    = *child.pcode;
 
                      msg = ("Creating p" +
                            std::to_string(child.num) +
                            " on " +
                            part.luks->BlockDev(0) +
                            " size (bytes) " +
-                           std::to_string(sz)); MSG(msg);
+                           std::to_string(attrs.size_bytes) +
+                           " type " + attrs.type_id); MSG(msg);
 
-                     ret = parted.appendPartition(sz,*child.pcode);
+                     ret = parted.appendPartition(attrs);
                   }
                   if (!ret)
                      break;
