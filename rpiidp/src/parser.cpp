@@ -471,6 +471,14 @@ bool IDPparser::parseIGv2(const Json::Value& json, const IDPversion& version, st
    if (ptable.asString() == "gpt")
       image_.device_storage.ptable_type = IDPptable_type::GPT;
 
+   if (image_.device_storage.ptable_type == IDPptable_type::GPT) {
+      const Json::Value& id = json["layout"]["partitiontable"]["id"];
+      if (id.isString() && !id.asString().empty())
+         image_.device_storage.ptable_id = id.asString();
+      else
+         image_.device_storage.ptable_id.reset();
+   }
+
    if (!checkPMAPCompat(json, str, error)) {
       ERR("PMAP compat check failed: " << error);
       return false;

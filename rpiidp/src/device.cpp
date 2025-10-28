@@ -555,9 +555,17 @@ bool IDPdeviceWriter::WritePhysicalPartitions()
       return false;
    }
 
-   ret = parted.createPartitionTable(
-         device_->image_.device_storage.ptable_type == IDPptable_type::DOS ?
-         "DOS" : "GPT", std::nullopt);
+   if (device_->image_.device_storage.ptable_type == IDPptable_type::DOS) {
+      ret = parted.createPartitionTable("DOS", std::nullopt);
+   }
+   else {
+      std::optional<std::string> id = std::nullopt;
+      if (device_->image_.device_storage.ptable_id &&
+            !device_->image_.device_storage.ptable_id->empty()) {
+         id = device_->image_.device_storage.ptable_id;
+      }
+      ret = parted.createPartitionTable("GPT", id);
+   }
 
    if (!ret) {
       ERR("Failed to create partition table");

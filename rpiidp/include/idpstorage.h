@@ -22,6 +22,7 @@ struct IDPstorage {
    size_t sector_size;
    size_t ptable_align;
    IDPptable_type ptable_type;
+   std::optional<std::string> ptable_id;
 
    std::string_view typeString() const {
       switch (type) {
