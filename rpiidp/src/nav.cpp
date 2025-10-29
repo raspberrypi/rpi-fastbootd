@@ -434,7 +434,6 @@ NavResult PartitionNavigator::processEncryptedNode(
 
    if (encryptedNode.isMember("slots")) {
       nr += processSlots(encryptedNode["slots"], result, num, encryptedPartition, false);
-      return nr;
    }
 
    if (encryptedNode.isMember("partitions")) {
@@ -625,16 +624,24 @@ PartitionNavigator::getPartitions(unsigned int& order) const
     }
 
     if (node.isObject()) {
-        if (!isEncryptedNode && node.isMember("partitions")) {
-            nr += processRegularPartitions(node["partitions"], result, order, nullptr);
-        }
-        if (node.isMember("encrypted")) {
-            nr += processEncryptedNode(node["encrypted"], result, order, nullptr);
-        }
-        if (!processNav(nr)) {
-           return {};
-        }
-    }
+       // currentSlot.empty() ensures we only process the true top level of the pmap.
+       // currentSlot is set when traversing inside a slots branch.
 
+       // Top-level partitions (skip when under slot/encrypted)
+       if (!isEncryptedNode && currentSlot.empty() && node.isMember("partitions")) {
+          nr += processRegularPartitions(node["partitions"], result, order, nullptr);
+       }
+       // Top-level slots (skip when under encrypted)
+       if (!isEncryptedNode && currentSlot.empty() && node.isMember("slots")) {
+          nr += processSlots(node["slots"], result, order, nullptr, /*processEncrypted=*/true);
+       }
+       // Top-level encrypted container
+       if (currentSlot.empty() && node.isMember("encrypted")) {
+          nr += processEncryptedNode(node["encrypted"], result, order, nullptr);
+       }
+       if (!processNav(nr)) {
+          return {};
+       }
+    }
     return result;
 }
