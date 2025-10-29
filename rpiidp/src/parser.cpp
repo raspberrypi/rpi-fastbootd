@@ -247,6 +247,7 @@ namespace {
 
       if (partition->isCryptContainer()) {
          MSG("Partition: [encrypted container]");
+         MSG("expand: " << (partition->expand_to_fit ? "yes" : "no"));
          if (partition->luks) {
             MSG("" << partition->luks->summary());
          }
@@ -270,8 +271,9 @@ namespace {
             MSG(" uuid: " << *partition->puuid);
          if (partition->role)
             MSG(" role: " << *partition->role);
+         MSG(" expand: " << (partition->expand_to_fit ? "yes" : "no"));
       }
-         MSG(" order: " << partition->order);
+      MSG(" order: " << partition->order);
    }
 
 
@@ -600,6 +602,7 @@ bool IDPparser::parseIGv2(const Json::Value& json, const IDPversion& version, st
             p.gptuuid = partition->puuid;
       }
       p.index = partitions_.size();
+      p.expand_to_fit = partition->expand_to_fit;
 
       // Set parent_index
       if (partition->parent) {

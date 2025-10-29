@@ -56,6 +56,7 @@ void printp(const IDPpartition* p, const std::vector<IDPpartition>& all, unsigne
           MSG_INDENT(indent, " uuid(gpt) " << *p->gptuuid);
 
     }
+    MSG_INDENT(indent, " expand: " << (p->expandToFit() ? "yes" : "no"));
 
     if (p->hasChildren(all)) {
           p->foreachChild(all, [&](const IDPpartition& child) {

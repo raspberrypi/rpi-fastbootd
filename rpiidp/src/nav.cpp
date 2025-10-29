@@ -122,6 +122,10 @@ namespace Validation {
          }
       }
 
+      if (node.isMember("expand-to-fit") && !node["expand-to-fit"].isBool()) {
+         nr.error("Partition expand-to-fit must be a Bool");
+         return nr;
+      }
       return nr;
    }
 }
@@ -360,6 +364,9 @@ NavResult PartitionNavigator::processRegularPartitions(
             partition->uuid = s["uuid"].asString();
       }
 
+      if (p.isMember("expand-to-fit"))
+         partition->expand_to_fit = p["expand-to-fit"].asBool();
+
       partition->parent = parentPartition;
       partition->navigator = shared_from_this();
       partition->order = ++num;
@@ -397,6 +404,9 @@ std::shared_ptr<Partition> PartitionNavigator::createEncryptedPartition(
       luksConfig.uuid = luks["uuid"].asString();
    }
 
+   if (encryptedNode.isMember("expand-to-fit"))
+      encryptedPartition->expand_to_fit = encryptedNode["expand-to-fit"].asBool();
+
    encryptedPartition->luks = luksConfig;
    encryptedPartition->navigator = shared_from_this();
    encryptedPartition->order = ++num;
@@ -419,6 +429,11 @@ NavResult PartitionNavigator::processEncryptedNode(
    nr = Validation::validateLUKS(pmap_version_, encryptedNode);
    if (nr.iserror()) {
       nr.error("Bad LUKS config in encrypted container");
+      return nr;
+   }
+
+   if (encryptedNode.isMember("expand-to-fit") && !encryptedNode["expand-to-fit"].isBool()) {
+      nr.error("Partition expand-to-fit must be a Bool");
       return nr;
    }
 

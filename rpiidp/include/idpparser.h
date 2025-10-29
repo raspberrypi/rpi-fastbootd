@@ -16,6 +16,7 @@
 class IDPdeviceWriter;
 
 struct IDPpartition {
+    bool expand_to_fit = false;
     std::uint32_t num;
     std::optional<std::string> img;
     std::optional<std::string> simg;
@@ -36,6 +37,7 @@ struct IDPpartition {
     int getIndex() const { return index; }
     int getParentIndex() const { return parent_index; }
     std::uint64_t getSize(bool aligned, const std::optional<std::reference_wrapper<const std::vector<IDPpartition>>>& all) const;
+    bool expandToFit() const { return expand_to_fit; }
 
 private:
     friend class IDPdeviceWriter;
