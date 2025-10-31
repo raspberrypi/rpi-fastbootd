@@ -153,179 +153,558 @@ namespace {
     }
 } // namespace anonymous
 
+namespace {
+    // Helper to extract bit field from any OTP register
+    bool GetOtpRegisterBitField(const std::string& register_key, uint32_t mask, int shift, 
+                                std::string* message) {
+        bool found = false;
+        inspectOtp([&](std::string *key, std::string *value) {
+            if (*key == register_key) {
+                uint32_t value_int = std::stoul(*value, 0, 16);
+                *message = android::base::StringPrintf("0x%X", (value_int & mask) >> shift);
+                found = true;
+                return true;
+            }
+            return false;
+        }, message);
+        return found;
+    }
+} // namespace
+
 bool GetRevisionProcessor(FastbootDevice * /* device */, const std::vector<std::string> & /* args */,
                           std::string *message)
 {
-    inspectOtp([&message](std::string *key, std::string *value){
-        if (*key == "32") {
-            uint32_t value_int = std::stoul(*value, 0, 16);
-
-            *message = android::base::StringPrintf("0x%X", (value_int & 0xF000) >> 12);
-            return true;
-        }
-        return false;
-    },message);
-
+    GetOtpRegisterBitField("32", 0xF000, 12, message);
     return true;
 }
 
 bool GetRevisionManufacturer(FastbootDevice * /* device */, const std::vector<std::string> & /* args */,
                              std::string *message)
 {
-    inspectOtp([&message](std::string *key, std::string *value) {
-        if (*key == "32") {
-            uint32_t value_int = std::stoul(*value, 0, 16);
-
-            *message = android::base::StringPrintf("0x%X", (value_int & 0xF0000) >> 16);
-            return true;
-        }
-        return false;
-    },message);
+    GetOtpRegisterBitField("32", 0xF0000, 16, message);
     return true;
 }
 
 bool GetRevisionMemory(FastbootDevice * /* device */, const std::vector<std::string> & /* args */,
                        std::string *message)
 {
-    inspectOtp([&message](std::string *key, std::string *value) {
-        if (*key == "32") {
-            uint32_t value_int = std::stoul(*value, 0, 16);
-
-            *message = android::base::StringPrintf("0x%X", (value_int & 0x700000) >> 20);
-            return true;
-        }
-        return false;
-    },message);
-
+    GetOtpRegisterBitField("32", 0x700000, 20, message);
     return true;
 }
 
 bool GetRevisionType(FastbootDevice * /* device */, const std::vector<std::string> & /* args */,
                      std::string *message)
 {
-    inspectOtp([&message](std::string *key, std::string *value) {
-        if (*key == "32") {
-            uint32_t value_int = std::stoul(*value, 0, 16);
-
-            *message = android::base::StringPrintf("0x%X", (value_int & 0x0FF0) >> 4);
-            return true;
-        }
-        return false;
-    },message);
+    GetOtpRegisterBitField("32", 0x0FF0, 4, message);
     return true;
 }
 
 bool GetRevisionRevision(FastbootDevice * /* device */, const std::vector<std::string> & /* args */,
                          std::string *message)
 {
-    inspectOtp([&message](std::string *key, std::string *value) {
-        if (*key == "32") {
-            uint32_t value_int = std::stoul(*value, 0, 16);
-
-            *message = android::base::StringPrintf("0x%X", (value_int & 0x0F));
-            return true;
-        }
-        return false;
-    },message);
-
+    GetOtpRegisterBitField("32", 0x0F, 0, message);
     return true;
 }
 
+namespace {
+    // Helper to format MAC address hex string with colons
+    std::string FormatMacPart(const std::string& hex) {
+        std::string result = hex;
+        for (size_t i = 2; i < result.length(); i += 3) {
+            result.insert(i, ":");
+        }
+        return result;
+    }
+
+    // Helper to extract MAC address from OTP registers
+    bool GetMacFromOtp(const std::string& low_key, const std::string& high_key, std::string* message) {
+        std::string mac_lo, mac_hi;
+        uint required = 2;
+        inspectOtp([&](std::string *key, std::string *value) {
+            if (*key == low_key) {
+                mac_lo = FormatMacPart(value->substr(0, 4));
+                required--;
+            } else if (*key == high_key) {
+                mac_hi = FormatMacPart(*value);
+                required--;
+            }
+            return !required;  // Return true when both found
+        }, message);
+        *message = mac_hi + ":" + mac_lo;
+        return true;
+    }
+
+    // Helper to execute a command and capture output to a file
+    bool ExecuteCommandToFile(const char* command_path, char* const args[], 
+                              const char* output_file, std::string* output) {
+        posix_spawn_file_actions_t action;
+        posix_spawn_file_actions_init(&action);
+        posix_spawn_file_actions_addopen(&action, STDOUT_FILENO, output_file, O_WRONLY | O_CREAT, 0644);
+        posix_spawn_file_actions_adddup2(&action, STDOUT_FILENO, STDERR_FILENO);
+
+        int subprocess_rc = -1;
+        int ret = rpi::process_spawn_blocking(&subprocess_rc, command_path, args, NULL, &action);
+        posix_spawn_file_actions_destroy(&action);
+
+        if (ret == 0 && subprocess_rc == 0) {
+            if (output) {
+                android::base::ReadFileToString(output_file, output);
+            }
+            return true;
+        }
+        return false;
+    }
+
+    // Helper to try executing a command with multiple possible paths
+    bool TryExecuteCommand(const std::vector<const char*>& command_paths, 
+                          const std::vector<const char*>& args,
+                          const char* output_file, 
+                          std::string* output) {
+        for (const char* cmd_path : command_paths) {
+            if (access(cmd_path, X_OK) != 0) {
+                continue;  // Path doesn't exist or not executable
+            }
+            
+            // Build args array with command path as first element
+            std::vector<char*> full_args;
+            full_args.push_back(const_cast<char*>(cmd_path));
+            for (const char* arg : args) {
+                full_args.push_back(const_cast<char*>(arg));
+            }
+            full_args.push_back(NULL);
+            
+            if (ExecuteCommandToFile(cmd_path, full_args.data(), output_file, output)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // Helper for trying multiple network interfaces
+    const char* kNetworkInterfaces[] = {"end0", "eth0"};
+    constexpr size_t kNumNetworkInterfaces = 2;
+
+    // IP version for protocol-agnostic functions
+    enum class IpVersion { V4, V6, BOTH };
+
+    // Check if address matches IP version
+    bool IsIpVersion(const std::string& addr, IpVersion version) {
+        bool has_colon = addr.find(':') != std::string::npos;
+        bool has_dot = addr.find('.') != std::string::npos;
+        
+        switch (version) {
+            case IpVersion::V4:
+                return has_dot && !has_colon;
+            case IpVersion::V6:
+                return has_colon;
+            case IpVersion::BOTH:
+                return true;
+        }
+        return false;
+    }
+
+    // Parse IPv4 address from ifconfig or ip command output
+    bool ParseIpv4Address(const std::string& output, std::string* address) {
+        std::istringstream stream(output);
+        std::string line;
+        
+        // Try to parse ifconfig output first
+        while (std::getline(stream, line)) {
+            size_t pos = line.find("inet ");
+            if (pos != std::string::npos) {
+                std::string inet_part = line.substr(pos + 5);
+                std::istringstream iss(inet_part);
+                std::string addr;
+                
+                // Try common format first
+                iss >> addr;
+                if (addr.find('.') != std::string::npos) {
+                    *address = addr;
+                    return true;
+                }
+                
+                // Try older format with "addr:" prefix
+                pos = inet_part.find("addr:");
+                if (pos != std::string::npos) {
+                    std::string addr_part = inet_part.substr(pos + 5);
+                    pos = addr_part.find(' ');
+                    if (pos != std::string::npos) {
+                        *address = addr_part.substr(0, pos);
+                        return true;
+                    }
+                }
+            }
+        }
+        
+        // Try to parse ip command output (format: "inet 192.168.1.2/24 ...")
+        stream.clear();
+        stream.seekg(0);
+        
+        while (std::getline(stream, line)) {
+            size_t pos = line.find("inet ");
+            if (pos != std::string::npos) {
+                std::string inet_part = line.substr(pos + 5);
+                pos = inet_part.find('/');
+                if (pos != std::string::npos) {
+                    *address = inet_part.substr(0, pos);
+                    return true;
+                }
+            }
+        }
+        
+        return false;
+    }
+
+    // Parse IPv6 address from ifconfig or ip command output (skip link-local)
+    bool ParseIpv6Address(const std::string& output, std::string* address) {
+        std::istringstream stream(output);
+        std::string line;
+        
+        while (std::getline(stream, line)) {
+            size_t pos = line.find("inet6 ");
+            if (pos != std::string::npos) {
+                std::string inet_part = line.substr(pos + 6);
+                
+                // Skip link-local addresses (fe80::)
+                if (inet_part.find("fe80::") != std::string::npos) {
+                    continue;
+                }
+                
+                // Try standard format first
+                std::istringstream iss(inet_part);
+                std::string addr;
+                iss >> addr;
+                
+                // Remove scope ID if present (e.g., "%end0" or "%eth0")
+                pos = addr.find('%');
+                if (pos != std::string::npos) {
+                    addr = addr.substr(0, pos);
+                }
+                
+                // Remove prefix length if present (e.g., "/64")
+                pos = addr.find('/');
+                if (pos != std::string::npos) {
+                    addr = addr.substr(0, pos);
+                }
+                
+                if (addr.find(':') != std::string::npos) {
+                    *address = addr;
+                    return true;
+                }
+                
+                // Try alternative format with "addr:" prefix
+                pos = inet_part.find("addr:");
+                if (pos != std::string::npos) {
+                    std::string addr_part = inet_part.substr(pos + 5);
+                    pos = addr_part.find(' ');
+                    if (pos != std::string::npos) {
+                        addr_part = addr_part.substr(0, pos);
+                    }
+                    
+                    // Remove prefix length if present
+                    pos = addr_part.find('/');
+                    if (pos != std::string::npos) {
+                        addr_part = addr_part.substr(0, pos);
+                    }
+                    
+                    if (addr_part.find(':') != std::string::npos) {
+                        *address = addr_part;
+                        return true;
+                    }
+                }
+            }
+        }
+        
+        return false;
+    }
+
+    // Parse gateway from route command output
+    bool ParseGatewayFromRouteOutput(const std::string& output, 
+                                      const std::string& interface, 
+                                      IpVersion version, 
+                                      std::string* gateway) {
+        std::istringstream stream(output);
+        std::string line;
+        
+        while (std::getline(stream, line)) {
+            // Check for default route with our interface
+            bool is_default = (line.find("0.0.0.0") == 0 || 
+                              line.find("::/0") != std::string::npos || 
+                              line.find("default") == 0);
+            
+            if (is_default && line.find(interface) != std::string::npos) {
+                std::istringstream iss(line);
+                std::string dest, gw;
+                iss >> dest >> gw;
+                
+                // Handle "default via GATEWAY" format
+                if (dest == "default" && gw == "via") {
+                    iss >> gw;
+                }
+                
+                if (IsIpVersion(gw, version)) {
+                    *gateway = gw;
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    // Parse gateway from ip route output (format: "default via X.X.X.X dev ...")
+    bool ParseGatewayFromIpRouteOutput(const std::string& output, std::string* gateway) {
+        std::istringstream stream(output);
+        std::string line;
+        
+        if (std::getline(stream, line)) {
+            size_t pos = line.find("via ");
+            if (pos != std::string::npos) {
+                std::string via_part = line.substr(pos + 4);
+                pos = via_part.find(' ');
+                if (pos != std::string::npos) {
+                    *gateway = via_part.substr(0, pos);
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    // Convert CIDR prefix length to dotted decimal netmask
+    std::string CidrToNetmask(int prefix_length) {
+        if (prefix_length < 0 || prefix_length > 32) {
+            return "";
+        }
+        uint32_t netmask = prefix_length ? (0xFFFFFFFF << (32 - prefix_length)) : 0;
+        return android::base::StringPrintf("%d.%d.%d.%d",
+            (netmask >> 24) & 0xFF,
+            (netmask >> 16) & 0xFF,
+            (netmask >> 8) & 0xFF,
+            netmask & 0xFF);
+    }
+
+    // Parse netmask from ifconfig output
+    bool ParseNetmaskFromIfconfig(const std::string& output, IpVersion version, 
+                                  std::string* netmask) {
+        std::istringstream stream(output);
+        std::string line;
+        const char* search_str = (version == IpVersion::V4) ? "inet " : "inet6 ";
+        
+        while (std::getline(stream, line)) {
+            size_t pos = line.find(search_str);
+            if (pos == std::string::npos) continue;
+            
+            // Skip link-local for IPv6
+            if (version == IpVersion::V6 && line.find("fe80::") != std::string::npos) {
+                continue;
+            }
+            
+            // Look for "netmask" keyword
+            pos = line.find("netmask ");
+            if (pos != std::string::npos) {
+                std::string netmask_part = line.substr(pos + 8);
+                std::istringstream iss(netmask_part);
+                iss >> *netmask;
+                return true;
+            }
+            
+            // Look for older "Mask:" format
+            pos = line.find("Mask:");
+            if (pos != std::string::npos) {
+                *netmask = line.substr(pos + 5);
+                return true;
+            }
+            
+            // For IPv6, look for "prefixlen"
+            if (version == IpVersion::V6) {
+                pos = line.find("prefixlen ");
+                if (pos != std::string::npos) {
+                    std::string prefix_part = line.substr(pos + 10);
+                    std::istringstream iss(prefix_part);
+                    iss >> *netmask;
+                    return true;
+                }
+            }
+            
+            // Also try to find "/prefix" format
+            pos = line.find("/");
+            if (pos != std::string::npos) {
+                std::string after_slash = line.substr(pos + 1);
+                pos = after_slash.find(" ");
+                if (pos != std::string::npos) {
+                    *netmask = after_slash.substr(0, pos);
+                } else {
+                    *netmask = after_slash;
+                }
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // Parse prefix from ip command output
+    bool ParsePrefixFromIpOutput(const std::string& output, IpVersion version, 
+                                 std::string* prefix) {
+        std::istringstream stream(output);
+        std::string line;
+        const char* search_str = (version == IpVersion::V4) ? "inet " : "inet6 ";
+        
+        while (std::getline(stream, line)) {
+            size_t pos = line.find(search_str);
+            if (pos == std::string::npos) continue;
+            
+            // Skip link-local for IPv6
+            if (version == IpVersion::V6 && line.find("fe80::") != std::string::npos) {
+                continue;
+            }
+            
+            std::string inet_part = line.substr(pos + strlen(search_str));
+            pos = inet_part.find('/');
+            if (pos != std::string::npos) {
+                std::string prefix_str = inet_part.substr(pos + 1);
+                pos = prefix_str.find(' ');
+                if (pos != std::string::npos) {
+                    *prefix = prefix_str.substr(0, pos);
+                } else {
+                    *prefix = prefix_str;
+                }
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // Unified DNS server discovery for IPv4 and IPv6
+    bool FindDnsServers(IpVersion version, std::string* result) {
+        std::vector<std::string> dns_servers;
+        
+        // Method 1: Check /etc/resolv.conf
+        std::string resolv_conf;
+        if (android::base::ReadFileToString("/etc/resolv.conf", &resolv_conf)) {
+            std::istringstream stream(resolv_conf);
+            std::string line;
+            
+            while (std::getline(stream, line)) {
+                if (line.empty() || line[0] == '#') continue;
+                
+                size_t pos = line.find("nameserver ");
+                if (pos != std::string::npos) {
+                    std::string server = line.substr(pos + 11);
+                    // Trim whitespace
+                    server.erase(0, server.find_first_not_of(" \t"));
+                    server.erase(server.find_last_not_of(" \t\r\n") + 1);
+                    
+                    if (IsIpVersion(server, version)) {
+                        dns_servers.push_back(server);
+                    }
+                }
+            }
+            
+            if (!dns_servers.empty()) {
+                *result = android::base::Join(dns_servers, " ");
+                return true;
+            }
+        }
+        
+        // Method 2: Try nmcli for each interface
+        const char* dns_field = (version == IpVersion::V4) ? "IP4.DNS" : "IP6.DNS";
+        for (size_t i = 0; i < kNumNetworkInterfaces; ++i) {
+            std::string output;
+            if (TryExecuteCommand({"/usr/bin/nmcli"}, 
+                                 {"device", "show", kNetworkInterfaces[i]},
+                                 "/tmp/dns-nmcli.log", &output)) {
+                std::istringstream stream(output);
+                std::string line;
+                
+                while (std::getline(stream, line)) {
+                    if (line.find(dns_field) != std::string::npos) {
+                        size_t pos = line.find(":");
+                        if (pos != std::string::npos) {
+                            std::string server = line.substr(pos + 1);
+                            server.erase(0, server.find_first_not_of(" \t"));
+                            server.erase(server.find_last_not_of(" \t") + 1);
+                            
+                            if (!server.empty() && IsIpVersion(server, version)) {
+                                dns_servers.push_back(server);
+                            }
+                        }
+                    }
+                }
+                
+                if (!dns_servers.empty()) {
+                    *result = android::base::Join(dns_servers, " ");
+                    return true;
+                }
+            }
+        }
+        
+        *result = (version == IpVersion::V4) ? "No IPv4 DNS servers found" 
+                                              : "No IPv6 DNS servers found";
+        return false;
+    }
+
+    // DHCP configuration for v4/v6
+    struct DhcpConfig {
+        std::string client_port;
+        std::string server_port;
+        std::vector<std::string> process_names;
+        std::vector<std::string> lease_path_templates;
+    };
+
+    // Unified DHCP detection for IPv4 and IPv6
+    bool DetectDhcp(const char* interface, const DhcpConfig& config, std::string* result) {
+        // Method 1: Check for DHCP ports in netstat
+        std::string output;
+        if (TryExecuteCommand({"/bin/netstat"}, {"-nau"}, "/tmp/dhcp-info.log", &output)) {
+            if (output.find(config.client_port) != std::string::npos || 
+                (output.find(config.server_port) != std::string::npos && 
+                 output.find(interface) != std::string::npos)) {
+                *result = "yes";
+                return true;
+            }
+        }
+        
+        // Method 2: Check for DHCP client processes
+        if (TryExecuteCommand({"/bin/ps"}, {"aux"}, "/tmp/dhcp-proc.log", &output)) {
+            for (const auto& proc_name : config.process_names) {
+                if (output.find(proc_name) != std::string::npos && 
+                    output.find(interface) != std::string::npos) {
+                    *result = "yes";
+                    return true;
+                }
+            }
+        }
+        
+        // Method 3: Check for DHCP lease files
+        for (const auto& lease_template : config.lease_path_templates) {
+            char lease_path[PATH_MAX];
+            snprintf(lease_path, PATH_MAX, lease_template.c_str(), interface);
+            if (access(lease_path, F_OK) == 0) {
+                *result = "yes";
+                return true;
+            }
+        }
+        
+        *result = "no";
+        return true;
+    }
+} // namespace
+
 bool GetMacEthernet(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
                     std::string* message) {
-    std::string eth_mac_lo, eth_mac_up;
-    uint required = 2;
-    inspectOtp([&eth_mac_lo, &eth_mac_up, &required](std::string *key, std::string *value) {
-        if (*key == "50") {
-            eth_mac_lo = value->substr(0, 4);
-            // Insert colons between pairs
-            for (size_t i = 2; i < eth_mac_lo.length(); i += 3) {
-                eth_mac_lo.insert(i, ":");
-            }
-            required--;
-        } else if (*key == "51") {
-            eth_mac_up = *value;
-            for (size_t i = 2; i < eth_mac_up.length(); i += 3) {
-                eth_mac_up.insert(i, ":");
-            }
-            required--;
-        }
-
-        if (!required) {
-            return true;
-        } else {
-            return false;
-        }
-    }, message);
-    *message = eth_mac_up + ":" + eth_mac_lo;
-    return true;
+    return GetMacFromOtp("50", "51", message);
 }
 
 bool GetMacWifi(FastbootDevice * /* device */, const std::vector<std::string> & /* args */,
                 std::string *message)
 {
-    std::string wifi_mac_lo, wifi_mac_up;
-    uint required = 2;
-    inspectOtp([&wifi_mac_lo, &wifi_mac_up, &required](std::string *key, std::string *value) {
-        if (*key == "52") {
-            wifi_mac_lo = value->substr(0, 4);
-            for (size_t i = 2; i < wifi_mac_lo.length(); i += 3) {
-                wifi_mac_lo.insert(i, ":");
-            }
-            required--;
-        } else if (*key == "53") {
-            wifi_mac_up = *value;
-            for (size_t i = 2; i < wifi_mac_up.length(); i += 3) {
-                wifi_mac_up.insert(i, ":");
-            }
-            required--;
-        }
-        
-        if (!required)
-        {
-            return true;
-        } else {
-            return false;
-        }
-    }, message);
-    *message = wifi_mac_up + ":" + wifi_mac_lo;
-    return true;
+    return GetMacFromOtp("52", "53", message);
 }
 
 bool GetMacBt(FastbootDevice * /* device */, const std::vector<std::string> & /* args */,
               std::string *message)
 {
-    std::string mac_lo, mac_hi;
-    uint required = 2;
-    inspectOtp([&mac_lo, &mac_hi, &required](std::string *key, std::string *value) {
-        if (*key == "54")
-        {
-            mac_lo = value->substr(0, 4);
-            for (size_t i = 2; i < mac_lo.length(); i += 3)
-            {
-                mac_lo.insert(i, ":");
-            }
-            required--;
-        }
-        else if (*key == "55")
-        {
-            mac_hi = *value;
-            for (size_t i = 2; i < mac_hi.length(); i += 3)
-            {
-                mac_hi.insert(i, ":");
-            }
-            required--;
-        }
-        
-        if (!required)
-        {
-            return true;
-        } else {
-            return false;
-        }
-    }, message);
-    *message = mac_hi + ":" + mac_lo;
-    return true;
+    return GetMacFromOtp("54", "55", message);
 }
 
 bool GetMmcCid(FastbootDevice * /* device */, const std::vector<std::string> & /* args */,
@@ -967,133 +1346,25 @@ bool GetPrivkey(FastbootDevice* /* device */, const std::vector<std::string>& /*
 
 bool GetIpv4Address(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
                 std::string* message) {
-    // Try multiple possible commands and paths to find the IP address
-    // Also try both "end0" and "eth0" interfaces
-    
-    const char* interfaces[] = {"end0", "eth0"};
     std::string output;
-    bool success = false;
+    const char* output_file = "/tmp/ipv4-address.log";
     
-    for (const char* interface : interfaces) {
-        // Try ifconfig first (various possible paths)
-        const char* ifconfig_paths[] = {"/sbin/ifconfig", "/usr/sbin/ifconfig", "/bin/ifconfig"};
-        bool ifconfig_succeeded = false;
+    // Try both interfaces
+    for (size_t i = 0; i < kNumNetworkInterfaces; ++i) {
+        const char* interface = kNetworkInterfaces[i];
         
-        for (const char* ifconfig_path : ifconfig_paths) {
-            if (access(ifconfig_path, X_OK) != 0) {
-                continue;  // Path doesn't exist or not executable
-            }
-            
-            posix_spawn_file_actions_t action;
-            posix_spawn_file_actions_init(&action);
-            posix_spawn_file_actions_addopen(&action, STDOUT_FILENO, "/tmp/ipv4-address.log", O_WRONLY | O_CREAT, 0644);
-            posix_spawn_file_actions_adddup2(&action, STDOUT_FILENO, STDERR_FILENO);
-
-            char *arg[] = {const_cast<char*>(ifconfig_path), const_cast<char*>(interface), NULL};
-            int subprocess_rc = -1;
-            int ret = rpi::process_spawn_blocking(&subprocess_rc, ifconfig_path, arg, NULL, &action);
-            posix_spawn_file_actions_destroy(&action);
-
-            if (ret == 0 && subprocess_rc == 0) {
-                ifconfig_succeeded = true;
-                android::base::ReadFileToString("/tmp/ipv4-address.log", &output);
-                success = true;
-                break;
-            }
-        }
-        
-        // If ifconfig succeeded, don't try ip command
-        if (ifconfig_succeeded) {
-            break;
-        }
-        
-        // If ifconfig failed, try ip command
-        const char* ip_paths[] = {"/sbin/ip", "/usr/sbin/ip", "/bin/ip"};
-        bool ip_succeeded = false;
-        
-        for (const char* ip_path : ip_paths) {
-            if (access(ip_path, X_OK) != 0) {
-                continue;  // Path doesn't exist or not executable
-            }
-            
-            posix_spawn_file_actions_t action;
-            posix_spawn_file_actions_init(&action);
-            posix_spawn_file_actions_addopen(&action, STDOUT_FILENO, "/tmp/ipv4-address.log", O_WRONLY | O_CREAT, 0644);
-            posix_spawn_file_actions_adddup2(&action, STDOUT_FILENO, STDERR_FILENO);
-
-            char *arg[] = {const_cast<char*>(ip_path), const_cast<char*>("-4"), const_cast<char*>("addr"), 
-                          const_cast<char*>("show"), const_cast<char*>("dev"), const_cast<char*>(interface), NULL};
-            int subprocess_rc = -1;
-            int ret = rpi::process_spawn_blocking(&subprocess_rc, ip_path, arg, NULL, &action);
-            posix_spawn_file_actions_destroy(&action);
-
-            if (ret == 0 && subprocess_rc == 0) {
-                ip_succeeded = true;
-                android::base::ReadFileToString("/tmp/ipv4-address.log", &output);
-                success = true;
-                break;
-            }
-        }
-        
-        // If we got output from either command, break the interface loop
-        if (ip_succeeded) {
-            break;
-        }
-    }
-    
-    if (!success) {
-        *message = "Failed to get IPv4 address from either end0 or eth0";
-        return false;
-    }
-    
-    // Parse the output to extract IPv4 address
-    std::istringstream stream(output);
-    std::string line;
-    
-    // Try to parse ifconfig output first
-    while (std::getline(stream, line)) {
-        // Different ifconfig format possibilities:
-        // "inet 192.168.1.2 netmask 255.255.255.0" (common format)
-        // "inet addr:192.168.1.2 Bcast:192.168.1.255 Mask:255.255.255.0" (older format)
-        
-        size_t pos = line.find("inet ");
-        if (pos != std::string::npos) {
-            std::string inet_part = line.substr(pos + 5);
-            std::istringstream iss(inet_part);
-            std::string address;
-            
-            // Try common format first
-            iss >> address;
-            if (address.find('.') != std::string::npos) {
-                *message = address;
+        // Try ifconfig first
+        if (TryExecuteCommand({"/sbin/ifconfig", "/usr/sbin/ifconfig", "/bin/ifconfig"},
+                             {interface}, output_file, &output)) {
+            if (ParseIpv4Address(output, message)) {
                 return true;
             }
-            
-            // Try older format with "addr:" prefix
-            pos = inet_part.find("addr:");
-            if (pos != std::string::npos) {
-                std::string addr_part = inet_part.substr(pos + 5);
-                pos = addr_part.find(' ');
-                if (pos != std::string::npos) {
-                    *message = addr_part.substr(0, pos);
-                    return true;
-                }
-            }
         }
-    }
-    
-    // Now try to parse ip command output
-    // Format: "inet 192.168.1.2/24 brd 192.168.1.255 scope global end0"
-    stream.clear();
-    stream.seekg(0);
-    
-    while (std::getline(stream, line)) {
-        size_t pos = line.find("inet ");
-        if (pos != std::string::npos) {
-            std::string inet_part = line.substr(pos + 5);
-            pos = inet_part.find('/');
-            if (pos != std::string::npos) {
-                *message = inet_part.substr(0, pos);
+        
+        // Try ip command
+        if (TryExecuteCommand({"/sbin/ip", "/usr/sbin/ip", "/bin/ip"},
+                             {"-4", "addr", "show", "dev", interface}, output_file, &output)) {
+            if (ParseIpv4Address(output, message)) {
                 return true;
             }
         }
@@ -1105,89 +1376,26 @@ bool GetIpv4Address(FastbootDevice* /* device */, const std::vector<std::string>
 
 bool GetIpv4Gateway(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
                   std::string* message) {
-    // Try both "end0" and "eth0" interfaces
-    const char* interfaces[] = {"end0", "eth0"};
-    bool success = false;
     std::string output;
+    const char* output_file = "/tmp/ipv4-gateway.log";
     
-    for (const char* interface : interfaces) {
-        posix_spawn_file_actions_t action;
-        posix_spawn_file_actions_init(&action);
-        posix_spawn_file_actions_addopen(&action, STDOUT_FILENO, "/tmp/ipv4-gateway.log", O_WRONLY | O_CREAT, 0644);
-        posix_spawn_file_actions_adddup2(&action, STDOUT_FILENO, STDERR_FILENO);
-
-        // Try route -n first
-        char *arg[] = {"/sbin/route", "-n", NULL};
-        int subprocess_rc = -1;
-        int ret = rpi::process_spawn_blocking(&subprocess_rc, "/sbin/route", arg, NULL, &action);
-        posix_spawn_file_actions_destroy(&action);
-
-        if (ret == 0 && subprocess_rc == 0) {
-            android::base::ReadFileToString("/tmp/ipv4-gateway.log", &output);
-            
-            // Parse the output to extract IPv4 default gateway
-            // Format for route -n:
-            // Kernel IP routing table
-            // Destination     Gateway         Genmask         Flags Metric Ref    Use Iface
-            // 0.0.0.0         192.168.1.1     0.0.0.0         UG    0      0        0 end0
-            std::istringstream stream(output);
-            std::string line;
-            while (std::getline(stream, line)) {
-                if (line.find("0.0.0.0") == 0 && line.find(interface) != std::string::npos) {
-                    std::istringstream iss(line);
-                    std::string dest, gateway;
-                    iss >> dest >> gateway;
-                    *message = gateway;
-                    return true;
-                }
-            }
-            
-            // If we find the route command works but couldn't find our interface's gateway,
-            // continue to the next interface
-            success = true;
-        }
+    // Try both interfaces
+    for (size_t i = 0; i < kNumNetworkInterfaces; ++i) {
+        const char* interface = kNetworkInterfaces[i];
         
-        // If route command failed, try ip route
-        if (!success) {
-            posix_spawn_file_actions_t action2;
-            posix_spawn_file_actions_init(&action2);
-            posix_spawn_file_actions_addopen(&action2, STDOUT_FILENO, "/tmp/ipv4-gateway.log", O_WRONLY | O_CREAT, 0644);
-            posix_spawn_file_actions_adddup2(&action2, STDOUT_FILENO, STDERR_FILENO);
-
-            char *ip_arg[] = {"/sbin/ip", "-4", "route", "show", "dev", const_cast<char*>(interface), "default", NULL};
-            int subprocess_rc = -1;
-            int ret = rpi::process_spawn_blocking(&subprocess_rc, "/sbin/ip", ip_arg, NULL, &action2);
-            posix_spawn_file_actions_destroy(&action2);
-
-            if (ret == 0 && subprocess_rc == 0) {
-                android::base::ReadFileToString("/tmp/ipv4-gateway.log", &output);
-                
-                // Parse the output to extract IPv4 gateway
-                // Format: default via 192.168.1.1 dev end0 proto dhcp src 192.168.1.2 metric 100
-                std::istringstream stream(output);
-                std::string line;
-                if (std::getline(stream, line)) {
-                    size_t pos = line.find("via ");
-                    if (pos != std::string::npos) {
-                        std::string via_part = line.substr(pos + 4);
-                        pos = via_part.find(' ');
-                        if (pos != std::string::npos) {
-                            *message = via_part.substr(0, pos);
-                            return true;
-                        }
-                    }
-                }
-                
-                // If we find the ip command works but couldn't parse the gateway,
-                // still mark as success to avoid trying the other interface
-                success = true;
+        // Try route -n command
+        if (TryExecuteCommand({"/sbin/route"}, {"-n"}, output_file, &output)) {
+            if (ParseGatewayFromRouteOutput(output, interface, IpVersion::V4, message)) {
+                return true;
             }
         }
         
-        // If we got this far with success, we found the route command
-        // but not a gateway for this interface, try the next interface
-        if (success) {
-            continue;
+        // Try ip route command
+        if (TryExecuteCommand({"/sbin/ip"}, {"-4", "route", "show", "dev", interface, "default"}, 
+                             output_file, &output)) {
+            if (ParseGatewayFromIpRouteOutput(output, message)) {
+                return true;
+            }
         }
     }
     
@@ -1197,95 +1405,33 @@ bool GetIpv4Gateway(FastbootDevice* /* device */, const std::vector<std::string>
 
 bool GetIpv4Netmask(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
                    std::string* message) {
-    // Try both "end0" and "eth0" interfaces
-    const char* interfaces[] = {"end0", "eth0"};
+    std::string output;
+    const char* output_file = "/tmp/ipv4-netmask.log";
     
-    for (const char* interface : interfaces) {
-        posix_spawn_file_actions_t action;
-        posix_spawn_file_actions_init(&action);
-        posix_spawn_file_actions_addopen(&action, STDOUT_FILENO, "/tmp/ipv4-netmask.log", O_WRONLY | O_CREAT, 0644);
-        posix_spawn_file_actions_adddup2(&action, STDOUT_FILENO, STDERR_FILENO);
-
-        char *arg[] = {"/sbin/ifconfig", const_cast<char*>(interface), NULL};
-        int subprocess_rc = -1;
-        int ret = rpi::process_spawn_blocking(&subprocess_rc, "/sbin/ifconfig", arg, NULL, &action);
-        posix_spawn_file_actions_destroy(&action);
-
-        if (ret == 0 && subprocess_rc == 0) {
-            std::string output;
-            android::base::ReadFileToString("/tmp/ipv4-netmask.log", &output);
-            
-            // Parse the output to extract netmask
-            std::istringstream stream(output);
-            std::string line;
-            while (std::getline(stream, line)) {
-                size_t pos = line.find("netmask ");
-                if (pos != std::string::npos) {
-                    // Extract the netmask (format: inet 192.168.1.2 netmask 255.255.255.0)
-                    std::string netmask_part = line.substr(pos + 8);
-                    std::istringstream iss(netmask_part);
-                    std::string netmask;
-                    iss >> netmask;
-                    *message = netmask;
-                    return true;
-                }
-                
-                // Also try the older format with "Mask:"
-                pos = line.find("Mask:");
-                if (pos != std::string::npos) {
-                    std::string netmask = line.substr(pos + 5);
-                    *message = netmask;
-                    return true;
-                }
+    // Try both interfaces
+    for (size_t i = 0; i < kNumNetworkInterfaces; ++i) {
+        const char* interface = kNetworkInterfaces[i];
+        
+        // Try ifconfig first
+        if (TryExecuteCommand({"/sbin/ifconfig"}, {interface}, output_file, &output)) {
+            if (ParseNetmaskFromIfconfig(output, IpVersion::V4, message)) {
+                return true;
             }
         }
         
-        // If ifconfig failed, try ip command
-        posix_spawn_file_actions_t action2;
-        posix_spawn_file_actions_init(&action2);
-        posix_spawn_file_actions_addopen(&action2, STDOUT_FILENO, "/tmp/ipv4-netmask.log", O_WRONLY | O_CREAT, 0644);
-        posix_spawn_file_actions_adddup2(&action2, STDOUT_FILENO, STDERR_FILENO);
-
-        char *ip_arg[] = {"/sbin/ip", "-4", "addr", "show", "dev", const_cast<char*>(interface), NULL};
-        ret = rpi::process_spawn_blocking(&subprocess_rc, "/sbin/ip", ip_arg, NULL, &action2);
-        posix_spawn_file_actions_destroy(&action2);
-
-        if (ret == 0 && subprocess_rc == 0) {
-            std::string output;
-            android::base::ReadFileToString("/tmp/ipv4-netmask.log", &output);
-            
-            // Parse the output to extract CIDR netmask and convert to dotted decimal
-            std::istringstream stream(output);
-            std::string line;
-            while (std::getline(stream, line)) {
-                size_t pos = line.find("inet ");
-                if (pos != std::string::npos) {
-                    // Extract the CIDR prefix from the line (format: inet 192.168.1.2/24)
-                    std::string inet_part = line.substr(pos + 5);
-                    pos = inet_part.find('/');
-                    if (pos != std::string::npos) {
-                        std::string prefix_str = inet_part.substr(pos + 1);
-                        pos = prefix_str.find(' ');
-                        if (pos != std::string::npos) {
-                            prefix_str = prefix_str.substr(0, pos);
-                        }
-                        
-                        // Convert CIDR prefix to netmask
-                        try {
-                            int prefix = std::stoi(prefix_str);
-                            if (prefix >= 0 && prefix <= 32) {
-                                uint32_t netmask = prefix ? (0xFFFFFFFF << (32 - prefix)) : 0;
-                                *message = android::base::StringPrintf("%d.%d.%d.%d", 
-                                    (netmask >> 24) & 0xFF,
-                                    (netmask >> 16) & 0xFF,
-                                    (netmask >> 8) & 0xFF,
-                                    netmask & 0xFF);
-                                return true;
-                            }
-                        } catch (const std::exception& e) {
-                            continue; // Try next line or interface
-                        }
+        // Try ip command - returns CIDR prefix, need to convert
+        if (TryExecuteCommand({"/sbin/ip"}, {"-4", "addr", "show", "dev", interface}, 
+                             output_file, &output)) {
+            std::string prefix;
+            if (ParsePrefixFromIpOutput(output, IpVersion::V4, &prefix)) {
+                try {
+                    int prefix_len = std::stoi(prefix);
+                    *message = CidrToNetmask(prefix_len);
+                    if (!message->empty()) {
+                        return true;
                     }
+                } catch (const std::exception& e) {
+                    // Continue to next interface
                 }
             }
         }
@@ -1297,291 +1443,31 @@ bool GetIpv4Netmask(FastbootDevice* /* device */, const std::vector<std::string>
 
 bool GetIpv4Dns(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
                std::string* message) {
-    // Try both "end0" and "eth0" interfaces
-    const char* interfaces[] = {"end0", "eth0"};
-    
-    // First try using netstat to find DNS connections
-    posix_spawn_file_actions_t action;
-    posix_spawn_file_actions_init(&action);
-    posix_spawn_file_actions_addopen(&action, STDOUT_FILENO, "/tmp/dns-info.log", O_WRONLY | O_CREAT, 0644);
-    posix_spawn_file_actions_adddup2(&action, STDOUT_FILENO, STDERR_FILENO);
-
-    char *arg[] = {"/bin/netstat", "-tan", NULL};
-    int subprocess_rc = -1;
-    int ret = rpi::process_spawn_blocking(&subprocess_rc, "/bin/netstat", arg, NULL, &action);
-    posix_spawn_file_actions_destroy(&action);
-
-    if (ret == 0 && subprocess_rc == 0) {
-        std::string output;
-        android::base::ReadFileToString("/tmp/dns-info.log", &output);
-        
-        // Look for established connections to port 53 (DNS)
-        std::istringstream stream(output);
-        std::string line;
-        std::vector<std::string> dns_servers;
-        
-        while (std::getline(stream, line)) {
-            if (line.find(":53") != std::string::npos && line.find("ESTABLISHED") != std::string::npos) {
-                size_t pos = line.find(":");
-                if (pos != std::string::npos) {
-                    std::string server = line.substr(0, pos);
-                    // Clean up any whitespace
-                    server.erase(0, server.find_first_not_of(" \t"));
-                    
-                    // Only include IPv4 addresses
-                    if (server.find('.') != std::string::npos && server.find(':') == std::string::npos) {
-                        dns_servers.push_back(server);
-                    }
-                }
-            }
-        }
-        
-        if (!dns_servers.empty()) {
-            *message = android::base::Join(dns_servers, " ");
-            return true;
-        }
-    }
-    
-    // If netstat didn't find any DNS servers, check /etc/resolv.conf
-    std::string resolv_conf;
-    if (android::base::ReadFileToString("/etc/resolv.conf", &resolv_conf)) {
-        std::istringstream stream(resolv_conf);
-        std::string line;
-        std::vector<std::string> dns_servers;
-        
-        while (std::getline(stream, line)) {
-            // Skip comments and empty lines
-            if (line.empty() || line[0] == '#') continue;
-            
-            size_t pos = line.find("nameserver ");
-            if (pos != std::string::npos) {
-                std::string server = line.substr(pos + 11);
-                // Only include IPv4 addresses
-                if (server.find('.') != std::string::npos && server.find(':') == std::string::npos) {
-                    dns_servers.push_back(server);
-                }
-            }
-        }
-        
-        if (!dns_servers.empty()) {
-            *message = android::base::Join(dns_servers, " ");
-            return true;
-        }
-    }
-    
-    // If we still don't have DNS servers, try checking both interfaces with nmcli
-    for (const char* interface : interfaces) {
-        // Try using nmcli if available
-        posix_spawn_file_actions_t action2;
-        posix_spawn_file_actions_init(&action2);
-        posix_spawn_file_actions_addopen(&action2, STDOUT_FILENO, "/tmp/dns-nmcli.log", O_WRONLY | O_CREAT, 0644);
-        posix_spawn_file_actions_adddup2(&action2, STDOUT_FILENO, STDERR_FILENO);
-
-        char *nmcli_arg[] = {"/usr/bin/nmcli", "device", "show", const_cast<char*>(interface), NULL};
-        int subprocess_rc = -1;
-        int ret = rpi::process_spawn_blocking(&subprocess_rc, "/usr/bin/nmcli", nmcli_arg, NULL, &action2);
-        posix_spawn_file_actions_destroy(&action2);
-
-        if (ret == 0 && subprocess_rc == 0) {
-            std::string output;
-            android::base::ReadFileToString("/tmp/dns-nmcli.log", &output);
-            
-            // Parse DNS server info from nmcli output
-            std::istringstream stream(output);
-            std::string line;
-            std::vector<std::string> dns_servers;
-            
-            while (std::getline(stream, line)) {
-                if (line.find("IP4.DNS") != std::string::npos) {
-                    size_t pos = line.find(":");
-                    if (pos != std::string::npos) {
-                        std::string server = line.substr(pos + 1);
-                        // Trim whitespace
-                        server.erase(0, server.find_first_not_of(" \t"));
-                        server.erase(server.find_last_not_of(" \t") + 1);
-                        
-                        if (!server.empty() && server.find('.') != std::string::npos) {
-                            dns_servers.push_back(server);
-                        }
-                    }
-                }
-            }
-            
-            if (!dns_servers.empty()) {
-                *message = android::base::Join(dns_servers, " ");
-                return true;
-            }
-        }
-    }
-    
-    *message = "No IPv4 DNS servers found";
-    return false;
+    return FindDnsServers(IpVersion::V4, message);
 }
 
 bool GetIpv6Address(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
                   std::string* message) {
-    // Try multiple possible commands and paths to find the IPv6 address
-    // Also try both "end0" and "eth0" interfaces
-    
-    const char* interfaces[] = {"end0", "eth0"};
     std::string output;
-    bool success = false;
+    const char* output_file = "/tmp/ipv6-address.log";
     
-    for (const char* interface : interfaces) {
-        // Try ifconfig first (various possible paths)
-        const char* ifconfig_paths[] = {"/sbin/ifconfig", "/usr/sbin/ifconfig", "/bin/ifconfig"};
-        bool ifconfig_succeeded = false;
+    // Try both interfaces
+    for (size_t i = 0; i < kNumNetworkInterfaces; ++i) {
+        const char* interface = kNetworkInterfaces[i];
         
-        for (const char* ifconfig_path : ifconfig_paths) {
-            if (access(ifconfig_path, X_OK) != 0) {
-                continue;  // Path doesn't exist or not executable
-            }
-            
-            posix_spawn_file_actions_t action;
-            posix_spawn_file_actions_init(&action);
-            posix_spawn_file_actions_addopen(&action, STDOUT_FILENO, "/tmp/ipv6-address.log", O_WRONLY | O_CREAT, 0644);
-            posix_spawn_file_actions_adddup2(&action, STDOUT_FILENO, STDERR_FILENO);
-
-            char *arg[] = {const_cast<char*>(ifconfig_path), const_cast<char*>(interface), NULL};
-            int subprocess_rc = -1;
-            int ret = rpi::process_spawn_blocking(&subprocess_rc, ifconfig_path, arg, NULL, &action);
-            posix_spawn_file_actions_destroy(&action);
-
-            if (ret == 0 && subprocess_rc == 0) {
-                ifconfig_succeeded = true;
-                android::base::ReadFileToString("/tmp/ipv6-address.log", &output);
-                success = true;
-                break;
-            }
-        }
-        
-        // If ifconfig succeeded, don't try ip command
-        if (ifconfig_succeeded) {
-            break;
-        }
-        
-        // If ifconfig failed, try ip command
-        const char* ip_paths[] = {"/sbin/ip", "/usr/sbin/ip", "/bin/ip"};
-        bool ip_succeeded = false;
-        
-        for (const char* ip_path : ip_paths) {
-            if (access(ip_path, X_OK) != 0) {
-                continue;  // Path doesn't exist or not executable
-            }
-            
-            posix_spawn_file_actions_t action;
-            posix_spawn_file_actions_init(&action);
-            posix_spawn_file_actions_addopen(&action, STDOUT_FILENO, "/tmp/ipv6-address.log", O_WRONLY | O_CREAT, 0644);
-            posix_spawn_file_actions_adddup2(&action, STDOUT_FILENO, STDERR_FILENO);
-
-            char *arg[] = {const_cast<char*>(ip_path), const_cast<char*>("-6"), const_cast<char*>("addr"), 
-                          const_cast<char*>("show"), const_cast<char*>("dev"), const_cast<char*>(interface), NULL};
-            int subprocess_rc = -1;
-            int ret = rpi::process_spawn_blocking(&subprocess_rc, ip_path, arg, NULL, &action);
-            posix_spawn_file_actions_destroy(&action);
-
-            if (ret == 0 && subprocess_rc == 0) {
-                ip_succeeded = true;
-                android::base::ReadFileToString("/tmp/ipv6-address.log", &output);
-                success = true;
-                break;
-            }
-        }
-        
-        // If we got output from either command, break the interface loop
-        if (ip_succeeded) {
-            break;
-        }
-    }
-    
-    if (!success) {
-        *message = "Failed to get IPv6 address from either end0 or eth0";
-        return false;
-    }
-    
-    // Parse the output to extract IPv6 address (non-link-local)
-    std::istringstream stream(output);
-    std::string line;
-    
-    // First try parsing ifconfig output
-    while (std::getline(stream, line)) {
-        size_t pos = line.find("inet6 ");
-        if (pos != std::string::npos) {
-            std::string inet_part = line.substr(pos + 6);
-            
-            // Skip link-local addresses (fe80::)
-            if (inet_part.find("fe80::") == std::string::npos) {
-                // Format can be "inet6 2001:db8::1 prefixlen 64 scopeid 0x0"
-                // or "inet6 addr: 2001:db8::1/64 Scope:Global"
-                
-                // Try standard format first
-                std::istringstream iss(inet_part);
-                std::string address;
-                iss >> address;
-                
-                // Remove scope ID if present (e.g., "%end0" or "%eth0")
-                pos = address.find('%');
-                if (pos != std::string::npos) {
-                    address = address.substr(0, pos);
-                }
-                
-                // Remove prefix length if present (e.g., "/64")
-                pos = address.find('/');
-                if (pos != std::string::npos) {
-                    address = address.substr(0, pos);
-                }
-                
-                if (address.find(':') != std::string::npos) {
-                    *message = address;
-                    return true;
-                }
-                
-                // Try alternative format with "addr:" prefix
-                pos = inet_part.find("addr:");
-                if (pos != std::string::npos) {
-                    std::string addr_part = inet_part.substr(pos + 5);
-                    pos = addr_part.find(' ');
-                    if (pos != std::string::npos) {
-                        addr_part = addr_part.substr(0, pos);
-                    }
-                    
-                    // Remove prefix length if present
-                    pos = addr_part.find('/');
-                    if (pos != std::string::npos) {
-                        addr_part = addr_part.substr(0, pos);
-                    }
-                    
-                    if (addr_part.find(':') != std::string::npos) {
-                        *message = addr_part;
-                        return true;
-                    }
-                }
-            }
-        }
-    }
-    
-    // Now try to parse ip command output
-    // Format: "inet6 2001:db8::1/64 scope global"
-    stream.clear();
-    stream.seekg(0);
-    
-    while (std::getline(stream, line)) {
-        size_t pos = line.find("inet6 ");
-        if (pos != std::string::npos && line.find("fe80::") == std::string::npos) {
-            std::string inet_part = line.substr(pos + 6);
-            pos = inet_part.find('/');
-            if (pos != std::string::npos) {
-                *message = inet_part.substr(0, pos);
+        // Try ifconfig first
+        if (TryExecuteCommand({"/sbin/ifconfig", "/usr/sbin/ifconfig", "/bin/ifconfig"},
+                             {interface}, output_file, &output)) {
+            if (ParseIpv6Address(output, message)) {
                 return true;
-            } else {
-                // Handle case without prefix
-                std::istringstream iss(inet_part);
-                std::string address;
-                iss >> address;
-                if (address.find(':') != std::string::npos) {
-                    *message = address;
-                    return true;
-                }
+            }
+        }
+        
+        // Try ip command
+        if (TryExecuteCommand({"/sbin/ip", "/usr/sbin/ip", "/bin/ip"},
+                             {"-6", "addr", "show", "dev", interface}, output_file, &output)) {
+            if (ParseIpv6Address(output, message)) {
+                return true;
             }
         }
     }
@@ -1592,91 +1478,26 @@ bool GetIpv6Address(FastbootDevice* /* device */, const std::vector<std::string>
 
 bool GetIpv6Gateway(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
                   std::string* message) {
-    // Try both "end0" and "eth0" interfaces
-    const char* interfaces[] = {"end0", "eth0"};
-    bool success = false;
     std::string output;
+    const char* output_file = "/tmp/ipv6-gateway.log";
     
-    for (const char* interface : interfaces) {
-        posix_spawn_file_actions_t action;
-        posix_spawn_file_actions_init(&action);
-        posix_spawn_file_actions_addopen(&action, STDOUT_FILENO, "/tmp/ipv6-gateway.log", O_WRONLY | O_CREAT, 0644);
-        posix_spawn_file_actions_adddup2(&action, STDOUT_FILENO, STDERR_FILENO);
-
-        // Try route -6 -n first
-        char *arg[] = {"/sbin/route", "-n", "-6", NULL};
-        int subprocess_rc = -1;
-        int ret = rpi::process_spawn_blocking(&subprocess_rc, "/sbin/route", arg, NULL, &action);
-        posix_spawn_file_actions_destroy(&action);
-
-        if (ret == 0 && subprocess_rc == 0) {
-            android::base::ReadFileToString("/tmp/ipv6-gateway.log", &output);
-            
-            // Parse the output to extract IPv6 default gateway
-            std::istringstream stream(output);
-            std::string line;
-            while (std::getline(stream, line)) {
-                if ((line.find("::/0") != std::string::npos || line.find("default") == 0) && 
-                    line.find(interface) != std::string::npos) {
-                    std::istringstream iss(line);
-                    std::string dest, gateway;
-                    iss >> dest >> gateway;
-                    
-                    // Handle "default via GATEWAY" format
-                    if (dest == "default" && gateway == "via") {
-                        iss >> gateway;
-                    }
-                    
-                    *message = gateway;
-                    return true;
-                }
-            }
-            
-            // If we find the route command works but couldn't find our interface's gateway,
-            // continue to the next interface
-            success = true;
-        }
+    // Try both interfaces
+    for (size_t i = 0; i < kNumNetworkInterfaces; ++i) {
+        const char* interface = kNetworkInterfaces[i];
         
-        // If route command failed, try ip route
-        if (!success) {
-            posix_spawn_file_actions_t action2;
-            posix_spawn_file_actions_init(&action2);
-            posix_spawn_file_actions_addopen(&action2, STDOUT_FILENO, "/tmp/ipv6-gateway.log", O_WRONLY | O_CREAT, 0644);
-            posix_spawn_file_actions_adddup2(&action2, STDOUT_FILENO, STDERR_FILENO);
-
-            char *ip_arg[] = {"/sbin/ip", "-6", "route", "show", "dev", const_cast<char*>(interface), "default", NULL};
-            int subprocess_rc = -1;
-            int ret = rpi::process_spawn_blocking(&subprocess_rc, "/sbin/ip", ip_arg, NULL, &action2);
-            posix_spawn_file_actions_destroy(&action2);
-
-            if (ret == 0 && subprocess_rc == 0) {
-                android::base::ReadFileToString("/tmp/ipv6-gateway.log", &output);
-                
-                // Parse the output to extract IPv6 gateway
-                std::istringstream stream(output);
-                std::string line;
-                if (std::getline(stream, line)) {
-                    size_t pos = line.find("via ");
-                    if (pos != std::string::npos) {
-                        std::string via_part = line.substr(pos + 4);
-                        pos = via_part.find(' ');
-                        if (pos != std::string::npos) {
-                            *message = via_part.substr(0, pos);
-                            return true;
-                        }
-                    }
-                }
-                
-                // If we find the ip command works but couldn't parse the gateway,
-                // still mark as success to avoid trying the other interface
-                success = true;
+        // Try route -6 -n command
+        if (TryExecuteCommand({"/sbin/route"}, {"-n", "-6"}, output_file, &output)) {
+            if (ParseGatewayFromRouteOutput(output, interface, IpVersion::V6, message)) {
+                return true;
             }
         }
         
-        // If we got this far with success, we found the route command
-        // but not a gateway for this interface, try the next interface
-        if (success) {
-            continue;
+        // Try ip route command
+        if (TryExecuteCommand({"/sbin/ip"}, {"-6", "route", "show", "dev", interface, "default"}, 
+                             output_file, &output)) {
+            if (ParseGatewayFromIpRouteOutput(output, message)) {
+                return true;
+            }
         }
     }
     
@@ -1686,92 +1507,25 @@ bool GetIpv6Gateway(FastbootDevice* /* device */, const std::vector<std::string>
 
 bool GetIpv6Netmask(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
                    std::string* message) {
-    // Try both "end0" and "eth0" interfaces
-    const char* interfaces[] = {"end0", "eth0"};
+    std::string output;
+    const char* output_file = "/tmp/ipv6-netmask.log";
     
-    for (const char* interface : interfaces) {
-        posix_spawn_file_actions_t action;
-        posix_spawn_file_actions_init(&action);
-        posix_spawn_file_actions_addopen(&action, STDOUT_FILENO, "/tmp/ipv6-netmask.log", O_WRONLY | O_CREAT, 0644);
-        posix_spawn_file_actions_adddup2(&action, STDOUT_FILENO, STDERR_FILENO);
-
-        char *arg[] = {"/sbin/ifconfig", const_cast<char*>(interface), NULL};
-        int subprocess_rc = -1;
-        int ret = rpi::process_spawn_blocking(&subprocess_rc, "/sbin/ifconfig", arg, NULL, &action);
-        posix_spawn_file_actions_destroy(&action);
-
-        if (ret == 0 && subprocess_rc == 0) {
-            std::string output;
-            android::base::ReadFileToString("/tmp/ipv6-netmask.log", &output);
-            
-            // Parse the output to extract prefix length
-            std::istringstream stream(output);
-            std::string line;
-            while (std::getline(stream, line)) {
-                size_t pos = line.find("inet6 ");
-                if (pos != std::string::npos && line.find("fe80::") == std::string::npos) {
-                    // Look for prefixlen in the line
-                    pos = line.find("prefixlen ");
-                    if (pos != std::string::npos) {
-                        std::string prefix_part = line.substr(pos + 10);
-                        std::istringstream iss(prefix_part);
-                        std::string prefix;
-                        iss >> prefix;
-                        *message = prefix;
-                        return true;
-                    }
-                    
-                    // Also try to find "/prefix" format
-                    pos = line.find("/");
-                    if (pos != std::string::npos) {
-                        std::string after_slash = line.substr(pos + 1);
-                        pos = after_slash.find(" ");
-                        if (pos != std::string::npos) {
-                            *message = after_slash.substr(0, pos);
-                            return true;
-                        } else {
-                            *message = after_slash;
-                            return true;
-                        }
-                    }
-                }
+    // Try both interfaces (IPv6 netmask is actually prefix length, e.g., "64")
+    for (size_t i = 0; i < kNumNetworkInterfaces; ++i) {
+        const char* interface = kNetworkInterfaces[i];
+        
+        // Try ifconfig first
+        if (TryExecuteCommand({"/sbin/ifconfig"}, {interface}, output_file, &output)) {
+            if (ParseNetmaskFromIfconfig(output, IpVersion::V6, message)) {
+                return true;
             }
         }
         
-        // If ifconfig failed, try ip command
-        posix_spawn_file_actions_t action2;
-        posix_spawn_file_actions_init(&action2);
-        posix_spawn_file_actions_addopen(&action2, STDOUT_FILENO, "/tmp/ipv6-netmask.log", O_WRONLY | O_CREAT, 0644);
-        posix_spawn_file_actions_adddup2(&action2, STDOUT_FILENO, STDERR_FILENO);
-
-        char *ip_arg[] = {"/sbin/ip", "-6", "addr", "show", "dev", const_cast<char*>(interface), NULL};
-        ret = rpi::process_spawn_blocking(&subprocess_rc, "/sbin/ip", ip_arg, NULL, &action2);
-        posix_spawn_file_actions_destroy(&action2);
-
-        if (ret == 0 && subprocess_rc == 0) {
-            std::string output;
-            android::base::ReadFileToString("/tmp/ipv6-netmask.log", &output);
-            
-            // Parse the output to extract prefix length
-            std::istringstream stream(output);
-            std::string line;
-            while (std::getline(stream, line)) {
-                size_t pos = line.find("inet6 ");
-                if (pos != std::string::npos && line.find("fe80::") == std::string::npos) {
-                    std::string inet_part = line.substr(pos + 6);
-                    pos = inet_part.find('/');
-                    if (pos != std::string::npos) {
-                        std::string prefix_str = inet_part.substr(pos + 1);
-                        pos = prefix_str.find(' ');
-                        if (pos != std::string::npos) {
-                            *message = prefix_str.substr(0, pos);
-                            return true;
-                        } else {
-                            *message = prefix_str;
-                            return true;
-                        }
-                    }
-                }
+        // Try ip command
+        if (TryExecuteCommand({"/sbin/ip"}, {"-6", "addr", "show", "dev", interface}, 
+                             output_file, &output)) {
+            if (ParsePrefixFromIpOutput(output, IpVersion::V6, message)) {
+                return true;
             }
         }
     }
@@ -1782,66 +1536,19 @@ bool GetIpv6Netmask(FastbootDevice* /* device */, const std::vector<std::string>
 
 bool GetIpv6Dhcp(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
                 std::string* message) {
-    // Try both "end0" and "eth0" interfaces
-    const char* interfaces[] = {"end0", "eth0"};
+    static const DhcpConfig dhcpv6_config = {
+        ":546",  // client port
+        ":547",  // server port
+        {"dhclient", "dhcp6c"},  // process names (dhclient with -6 flag checked in DetectDhcp)
+        {"/var/lib/dhcp/dhclient6.%s.leases", "/var/lib/dhcp6c/dhcp6c_%s.lease"}
+    };
     
-    for (const char* interface : interfaces) {
-        // Check for DHCPv6 client connections using netstat
-        posix_spawn_file_actions_t action;
-        posix_spawn_file_actions_init(&action);
-        posix_spawn_file_actions_addopen(&action, STDOUT_FILENO, "/tmp/dhcpv6-info.log", O_WRONLY | O_CREAT, 0644);
-        posix_spawn_file_actions_adddup2(&action, STDOUT_FILENO, STDERR_FILENO);
-
-        char *arg[] = {"/bin/netstat", "-nau", NULL};
-        int subprocess_rc = -1;
-        int ret = rpi::process_spawn_blocking(&subprocess_rc, "/bin/netstat", arg, NULL, &action);
-        posix_spawn_file_actions_destroy(&action);
-
-        if (ret == 0 && subprocess_rc == 0) {
-            std::string output;
-            android::base::ReadFileToString("/tmp/dhcpv6-info.log", &output);
-            
-            // Check for UDP connections on DHCPv6 client port (546) or DHCPv6 server port (547)
-            if (output.find(":546") != std::string::npos || 
-                (output.find(":547") != std::string::npos && output.find(interface) != std::string::npos)) {
-                *message = "yes";
+    // Try both interfaces
+    for (size_t i = 0; i < kNumNetworkInterfaces; ++i) {
+        if (DetectDhcp(kNetworkInterfaces[i], dhcpv6_config, message)) {
+            if (*message == "yes") {
                 return true;
             }
-        }
-        
-        // Check for DHCPv6 client processes
-        posix_spawn_file_actions_t action2;
-        posix_spawn_file_actions_init(&action2);
-        posix_spawn_file_actions_addopen(&action2, STDOUT_FILENO, "/tmp/dhcpv6-proc.log", O_WRONLY | O_CREAT, 0644);
-        posix_spawn_file_actions_adddup2(&action2, STDOUT_FILENO, STDERR_FILENO);
-
-        char *arg2[] = {"/bin/ps", "aux", NULL};
-        int ret2 = rpi::process_spawn_blocking(&subprocess_rc, "/bin/ps", arg2, NULL, &action2);
-        posix_spawn_file_actions_destroy(&action2);
-
-        if (ret2 == 0 && subprocess_rc == 0) {
-            std::string ps_output;
-            android::base::ReadFileToString("/tmp/dhcpv6-proc.log", &ps_output);
-            
-            if ((ps_output.find("dhclient") != std::string::npos && 
-                ps_output.find("-6") != std::string::npos && 
-                ps_output.find(interface) != std::string::npos) ||
-                (ps_output.find("dhcp6c") != std::string::npos && 
-                ps_output.find(interface) != std::string::npos)) {
-                *message = "yes";
-                return true;
-            }
-        }
-        
-        // Also check for DHCPv6 lease file
-        char lease_path1[PATH_MAX];
-        char lease_path2[PATH_MAX];
-        snprintf(lease_path1, PATH_MAX, "/var/lib/dhcp/dhclient6.%s.leases", interface);
-        snprintf(lease_path2, PATH_MAX, "/var/lib/dhcp6c/dhcp6c_%s.lease", interface);
-        
-        if (access(lease_path1, F_OK) == 0 || access(lease_path2, F_OK) == 0) {
-            *message = "yes";
-            return true;
         }
     }
     
@@ -1851,188 +1558,24 @@ bool GetIpv6Dhcp(FastbootDevice* /* device */, const std::vector<std::string>& /
 
 bool GetIpv6Dns(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
                std::string* message) {
-    // Try both "end0" and "eth0" interfaces
-    const char* interfaces[] = {"end0", "eth0"};
-    
-    // First try using netstat to find DNS connections
-    posix_spawn_file_actions_t action;
-    posix_spawn_file_actions_init(&action);
-    posix_spawn_file_actions_addopen(&action, STDOUT_FILENO, "/tmp/dns6-info.log", O_WRONLY | O_CREAT, 0644);
-    posix_spawn_file_actions_adddup2(&action, STDOUT_FILENO, STDERR_FILENO);
-
-    char *arg[] = {"/bin/netstat", "-tan", NULL};
-    int subprocess_rc = -1;
-    int ret = rpi::process_spawn_blocking(&subprocess_rc, "/bin/netstat", arg, NULL, &action);
-    posix_spawn_file_actions_destroy(&action);
-
-    if (ret == 0 && subprocess_rc == 0) {
-        std::string output;
-        android::base::ReadFileToString("/tmp/dns6-info.log", &output);
-        
-        // Look for established connections to port 53 (DNS)
-        std::istringstream stream(output);
-        std::string line;
-        std::vector<std::string> dns_servers;
-        
-        while (std::getline(stream, line)) {
-            if (line.find(":53") != std::string::npos && line.find("ESTABLISHED") != std::string::npos) {
-                size_t pos = line.find(":");
-                if (pos != std::string::npos) {
-                    std::string server = line.substr(0, pos);
-                    // Clean up any whitespace
-                    server.erase(0, server.find_first_not_of(" \t"));
-                    
-                    // Only include IPv6 addresses
-                    if (server.find(':') != std::string::npos) {
-                        dns_servers.push_back(server);
-                    }
-                }
-            }
-        }
-        
-        if (!dns_servers.empty()) {
-            *message = android::base::Join(dns_servers, " ");
-            return true;
-        }
-    }
-    
-    // If netstat didn't find any DNS servers, check /etc/resolv.conf
-    std::string resolv_conf;
-    if (android::base::ReadFileToString("/etc/resolv.conf", &resolv_conf)) {
-        std::istringstream stream(resolv_conf);
-        std::string line;
-        std::vector<std::string> dns_servers;
-        
-        while (std::getline(stream, line)) {
-            // Skip comments and empty lines
-            if (line.empty() || line[0] == '#') continue;
-            
-            size_t pos = line.find("nameserver ");
-            if (pos != std::string::npos) {
-                std::string server = line.substr(pos + 11);
-                // Only include IPv6 addresses
-                if (server.find(':') != std::string::npos) {
-                    dns_servers.push_back(server);
-                }
-            }
-        }
-        
-        if (!dns_servers.empty()) {
-            *message = android::base::Join(dns_servers, " ");
-            return true;
-        }
-    }
-    
-    // If we still don't have DNS servers, try checking both interfaces with nmcli
-    for (const char* interface : interfaces) {
-        // Try using nmcli if available
-        posix_spawn_file_actions_t action2;
-        posix_spawn_file_actions_init(&action2);
-        posix_spawn_file_actions_addopen(&action2, STDOUT_FILENO, "/tmp/dns6-nmcli.log", O_WRONLY | O_CREAT, 0644);
-        posix_spawn_file_actions_adddup2(&action2, STDOUT_FILENO, STDERR_FILENO);
-
-        char *nmcli_arg[] = {"/usr/bin/nmcli", "device", "show", const_cast<char*>(interface), NULL};
-        int subprocess_rc = -1;
-        int ret = rpi::process_spawn_blocking(&subprocess_rc, "/usr/bin/nmcli", nmcli_arg, NULL, &action2);
-        posix_spawn_file_actions_destroy(&action2);
-
-        if (ret == 0 && subprocess_rc == 0) {
-            std::string output;
-            android::base::ReadFileToString("/tmp/dns6-nmcli.log", &output);
-            
-            // Parse DNS server info from nmcli output
-            std::istringstream stream(output);
-            std::string line;
-            std::vector<std::string> dns_servers;
-            
-            while (std::getline(stream, line)) {
-                if (line.find("IP6.DNS") != std::string::npos) {
-                    size_t pos = line.find(":");
-                    if (pos != std::string::npos) {
-                        std::string server = line.substr(pos + 1);
-                        // Trim whitespace
-                        server.erase(0, server.find_first_not_of(" \t"));
-                        server.erase(server.find_last_not_of(" \t") + 1);
-                        
-                        if (!server.empty() && server.find(':') != std::string::npos) {
-                            dns_servers.push_back(server);
-                        }
-                    }
-                }
-            }
-            
-            if (!dns_servers.empty()) {
-                *message = android::base::Join(dns_servers, " ");
-                return true;
-            }
-        }
-    }
-    
-    *message = "No IPv6 DNS servers found";
-    return false;
+    return FindDnsServers(IpVersion::V6, message);
 }
 
 bool GetIpv4Dhcp(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
                 std::string* message) {
-    // Try both "end0" and "eth0" interfaces
-    const char* interfaces[] = {"end0", "eth0"};
+    static const DhcpConfig dhcp_config = {
+        ":68",  // client port
+        ":67",  // server port
+        {"dhclient", "dhcpcd"},  // process names
+        {"/var/lib/dhcp/dhclient.%s.leases", "/var/lib/dhcpcd/dhcpcd-%s.lease"}
+    };
     
-    for (const char* interface : interfaces) {
-        // Check for DHCP client connections using netstat
-        posix_spawn_file_actions_t action;
-        posix_spawn_file_actions_init(&action);
-        posix_spawn_file_actions_addopen(&action, STDOUT_FILENO, "/tmp/dhcp-info.log", O_WRONLY | O_CREAT, 0644);
-        posix_spawn_file_actions_adddup2(&action, STDOUT_FILENO, STDERR_FILENO);
-
-        char *arg[] = {"/bin/netstat", "-nau", NULL};
-        int subprocess_rc = -1;
-        int ret = rpi::process_spawn_blocking(&subprocess_rc, "/bin/netstat", arg, NULL, &action);
-        posix_spawn_file_actions_destroy(&action);
-
-        if (ret == 0 && subprocess_rc == 0) {
-            std::string output;
-            android::base::ReadFileToString("/tmp/dhcp-info.log", &output);
-            
-            // Check for UDP connections on DHCP client port (68) or DHCP server port (67)
-            if (output.find(":68") != std::string::npos || 
-                (output.find(":67") != std::string::npos && output.find(interface) != std::string::npos)) {
-                *message = "yes";
+    // Try both interfaces
+    for (size_t i = 0; i < kNumNetworkInterfaces; ++i) {
+        if (DetectDhcp(kNetworkInterfaces[i], dhcp_config, message)) {
+            if (*message == "yes") {
                 return true;
             }
-        }
-        
-        // Check for DHCP client processes
-        posix_spawn_file_actions_t action2;
-        posix_spawn_file_actions_init(&action2);
-        posix_spawn_file_actions_addopen(&action2, STDOUT_FILENO, "/tmp/dhcp-proc.log", O_WRONLY | O_CREAT, 0644);
-        posix_spawn_file_actions_adddup2(&action2, STDOUT_FILENO, STDERR_FILENO);
-
-        char *arg2[] = {"/bin/ps", "aux", NULL};
-        int ret2 = rpi::process_spawn_blocking(&subprocess_rc, "/bin/ps", arg2, NULL, &action2);
-        posix_spawn_file_actions_destroy(&action2);
-
-        if (ret2 == 0 && subprocess_rc == 0) {
-            std::string ps_output;
-            android::base::ReadFileToString("/tmp/dhcp-proc.log", &ps_output);
-            
-            if ((ps_output.find("dhclient") != std::string::npos && 
-                ps_output.find(interface) != std::string::npos) ||
-                (ps_output.find("dhcpcd") != std::string::npos && 
-                ps_output.find(interface) != std::string::npos)) {
-                *message = "yes";
-                return true;
-            }
-        }
-        
-        // Also check for DHCP lease file
-        char lease_path1[PATH_MAX];
-        char lease_path2[PATH_MAX];
-        snprintf(lease_path1, PATH_MAX, "/var/lib/dhcp/dhclient.%s.leases", interface);
-        snprintf(lease_path2, PATH_MAX, "/var/lib/dhcpcd/dhcpcd-%s.lease", interface);
-        
-        if (access(lease_path1, F_OK) == 0 || access(lease_path2, F_OK) == 0) {
-            *message = "yes";
-            return true;
         }
     }
     
