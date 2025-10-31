@@ -36,7 +36,7 @@ set(CPACK_RESOURCE_FILE_README "${CMAKE_CURRENT_SOURCE_DIR}/fastboot/README.md")
 
 set(CPACK_DEBIAN_FILE_NAME DEB-DEFAULT)
 set(CPACK_DEBIAN_PACKAGE_ARCHITECTURE "arm64")
-set(CPACK_DEBIAN_PACKAGE_DEPENDS "android-liblog, android-libbase, zlib1g, android-libcutils, android-libsparse, libfdisk1, liburing2, libsystemd0, openssl, coreutils, xxd, sed, awk, raspi-utils-core")
+set(CPACK_DEBIAN_PACKAGE_DEPENDS "android-liblog, android-libbase, zlib1g, android-libcutils, android-libsparse, libfdisk1, liburing2, libsystemd0, net-tools, openssl, coreutils, xxd, sed, awk, raspi-utils-core")
 
 # cryptsetup-bin is needed for the oem commands 'cryptinit', 'cryptopen'
 set(CPACK_DEBIAN_PACKAGE_RECOMMENDS "cryptsetup-bin, gpiod")

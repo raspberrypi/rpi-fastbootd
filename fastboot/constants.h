@@ -103,3 +103,18 @@
 #define FB_VAR_SIGNED_EEPROM "secure-eeprom"
 #define FB_VAR_SIGNED_OTP "secure-otp"
 #define FB_VAR_SIGNED_DEVKEY "secure-devkey"
+
+#define FB_VAR_IPV4_ADDRESS "ipv4-address"
+#define FB_VAR_IPV4_GATEWAY "ipv4-gateway"
+#define FB_VAR_IPV4_NETMASK "ipv4-netmask"
+#define FB_VAR_IPV4_DNS "ipv4-dns"
+#define FB_VAR_IPV4_DHCP "ipv4-dhcp"
+
+#define FB_VAR_IPV6_ADDRESS "ipv6-address"
+#define FB_VAR_IPV6_GATEWAY "ipv6-gateway"
+#define FB_VAR_IPV6_NETMASK "ipv6-netmask"
+#define FB_VAR_IPV6_DNS "ipv6-dns"
+#define FB_VAR_IPV6_DHCP "ipv6-dhcp"
+
+
+

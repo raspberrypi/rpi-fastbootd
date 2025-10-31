@@ -116,6 +116,29 @@ bool GetSignedDevkey(FastbootDevice* /* device */, const std::vector<std::string
 bool GetSignedOtp(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
     std::string* message);
 
+// IP address information
+bool GetIpv4Address(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
+    std::string* message);
+bool GetIpv4Gateway(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
+    std::string* message);
+bool GetIpv4Netmask(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
+    std::string* message);
+bool GetIpv4Dns(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
+    std::string* message);
+bool GetIpv4Dhcp(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
+    std::string* message);
+
+bool GetIpv6Address(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
+    std::string* message);
+bool GetIpv6Gateway(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
+    std::string* message);
+bool GetIpv6Netmask(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
+    std::string* message);
+bool GetIpv6Dns(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
+    std::string* message);
+bool GetIpv6Dhcp(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
+    std::string* message);
+
 // Complex cases.
 bool GetDmesg(FastbootDevice* device);
 

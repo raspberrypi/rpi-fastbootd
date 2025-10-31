@@ -173,6 +173,17 @@ const std::unordered_map<std::string, VariableHandlers> kVariableMap = {
         {FB_VAR_SIGNED_OTP, {GetSignedOtp, nullptr}},
         {FB_VAR_SIGNED_DEVKEY, {GetSignedDevkey, nullptr}},
         {FB_VAR_PRIVKEY, {GetPrivkey, nullptr}},
+        {FB_VAR_IPV4_ADDRESS, {GetIpv4Address, nullptr}},
+        {FB_VAR_IPV4_GATEWAY, {GetIpv4Gateway, nullptr}},
+        {FB_VAR_IPV4_NETMASK, {GetIpv4Netmask, nullptr}},
+        {FB_VAR_IPV4_DNS, {GetIpv4Dns, nullptr}},
+        {FB_VAR_IPV4_DHCP, {GetIpv4Dhcp, nullptr}},
+        {FB_VAR_IPV6_ADDRESS, {GetIpv6Address, nullptr}},
+        {FB_VAR_IPV6_GATEWAY, {GetIpv6Gateway, nullptr}},
+        {FB_VAR_IPV6_NETMASK, {GetIpv6Netmask, nullptr}},
+        {FB_VAR_IPV6_DNS, {GetIpv6Dns, nullptr}},
+        {FB_VAR_IPV6_DHCP, {GetIpv6Dhcp, nullptr}},
+        
 };
 
 static bool GetVarAll(FastbootDevice* device) {
