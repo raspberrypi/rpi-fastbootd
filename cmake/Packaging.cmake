@@ -36,10 +36,20 @@ set(CPACK_RESOURCE_FILE_README "${CMAKE_CURRENT_SOURCE_DIR}/fastboot/README.md")
 
 set(CPACK_DEBIAN_FILE_NAME DEB-DEFAULT)
 set(CPACK_DEBIAN_PACKAGE_ARCHITECTURE "arm64")
-set(CPACK_DEBIAN_PACKAGE_DEPENDS "android-liblog, android-libbase, zlib1g, android-libcutils, android-libsparse, libfdisk1, liburing2, libsystemd0, net-tools, openssl, coreutils, xxd, sed, awk, raspi-utils-core")
 
-# cryptsetup-bin is needed for the oem commands 'cryptinit', 'cryptopen'
-set(CPACK_DEBIAN_PACKAGE_RECOMMENDS "cryptsetup-bin, gpiod")
+# Core runtime dependencies: libraries and essential utilities
+set(CPACK_DEBIAN_PACKAGE_DEPENDS "android-liblog, android-libbase, zlib1g, android-libcutils, android-libsparse, libfdisk1, liburing2, libsystemd0, libgpiod2, libcryptsetup12, openssl, coreutils, xxd, sed, awk, raspi-utils-core")
+
+# Recommended packages - no longer needed (native APIs handle everything)
+# set(CPACK_DEBIAN_PACKAGE_RECOMMENDS "")
+
+# Optional fallback commands (native APIs used by default)
+# net-tools: ifconfig (fallback for getifaddrs)
+# iproute2: ip (fallback for getifaddrs and /proc parsing)
+# util-linux: dmesg (fallback for klogctl)
+# gpiod: gpioset (fallback for libgpiod)
+# cryptsetup-bin: cryptsetup (fallback for libcryptsetup)
+set(CPACK_DEBIAN_PACKAGE_SUGGESTS "net-tools, iproute2, util-linux, gpiod, cryptsetup-bin")
 
 set(CPACK_COMPONENTS_GROUPING ALL_COMPONENTS_IN_ONE)
 

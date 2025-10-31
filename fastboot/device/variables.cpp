@@ -18,6 +18,8 @@
 
 #include <algorithm>
 #include <cstring>
+#include <fstream>
+#include <sstream>
 #include <inttypes.h>
 #include <stdio.h>
 
@@ -30,6 +32,15 @@
 // #include <ext4_utils/ext4_utils.h>
 // #include <fs_mgr.h>
 // #include <liblp/liblp.h>
+
+// Network interface access via getifaddrs() (POSIX libc)
+#include <ifaddrs.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <net/if.h>
+
+// Kernel log access via klogctl() (Linux syscall)
+#include <sys/klog.h>
 
 // #include "BootControlClient.h"
 #include "fastboot_device.h"
@@ -160,12 +171,12 @@ namespace {
         bool found = false;
         inspectOtp([&](std::string *key, std::string *value) {
             if (*key == register_key) {
-                uint32_t value_int = std::stoul(*value, 0, 16);
+            uint32_t value_int = std::stoul(*value, 0, 16);
                 *message = android::base::StringPrintf("0x%X", (value_int & mask) >> shift);
                 found = true;
-                return true;
-            }
-            return false;
+            return true;
+        }
+        return false;
         }, message);
         return found;
     }
@@ -189,8 +200,8 @@ bool GetRevisionMemory(FastbootDevice * /* device */, const std::vector<std::str
                        std::string *message)
 {
     GetOtpRegisterBitField("32", 0x700000, 20, message);
-    return true;
-}
+            return true;
+        }
 
 bool GetRevisionType(FastbootDevice * /* device */, const std::vector<std::string> & /* args */,
                      std::string *message)
@@ -200,7 +211,7 @@ bool GetRevisionType(FastbootDevice * /* device */, const std::vector<std::strin
 }
 
 bool GetRevisionRevision(FastbootDevice * /* device */, const std::vector<std::string> & /* args */,
-                         std::string *message)
+                       std::string *message)
 {
     GetOtpRegisterBitField("32", 0x0F, 0, message);
     return true;
@@ -274,7 +285,7 @@ namespace {
             full_args.push_back(NULL);
             
             if (ExecuteCommandToFile(cmd_path, full_args.data(), output_file, output)) {
-                return true;
+    return true;
             }
         }
         return false;
@@ -287,6 +298,220 @@ namespace {
     // IP version for protocol-agnostic functions
     enum class IpVersion { V4, V6, BOTH };
 
+    // Native network interface info retrieval using getifaddrs()
+    // Returns true if interface found with matching IP version
+    bool GetInterfaceInfoNative(const char* interface_name, IpVersion version,
+                                std::string* address, std::string* netmask) {
+        struct ifaddrs *ifaddr, *ifa;
+        
+        if (getifaddrs(&ifaddr) == -1) {
+            LOG(WARNING) << "getifaddrs() failed: " << strerror(errno);
+            return false;
+        }
+        
+        bool found = false;
+        for (ifa = ifaddr; ifa != NULL; ifa = ifa->ifa_next) {
+            if (ifa->ifa_addr == NULL) continue;
+            if (strcmp(ifa->ifa_name, interface_name) != 0) continue;
+            
+            int family = ifa->ifa_addr->sa_family;
+            
+            // Check if this is the right IP version
+            if ((version == IpVersion::V4 && family == AF_INET) ||
+                (version == IpVersion::V6 && family == AF_INET6)) {
+                
+                char addr_buf[INET6_ADDRSTRLEN];
+                
+                // Get address
+                void* addr_ptr = (family == AF_INET) 
+                    ? (void*)&((struct sockaddr_in*)ifa->ifa_addr)->sin_addr
+                    : (void*)&((struct sockaddr_in6*)ifa->ifa_addr)->sin6_addr;
+                
+                if (inet_ntop(family, addr_ptr, addr_buf, sizeof(addr_buf)) == NULL) {
+                    continue;
+                }
+                
+                // Skip link-local IPv6 addresses
+                if (version == IpVersion::V6 && strncmp(addr_buf, "fe80:", 5) == 0) {
+                    continue;
+                }
+                
+                if (address) {
+                    *address = addr_buf;
+                }
+                
+                // Get netmask if requested
+                if (netmask && ifa->ifa_netmask) {
+                    void* mask_ptr = (family == AF_INET)
+                        ? (void*)&((struct sockaddr_in*)ifa->ifa_netmask)->sin_addr
+                        : (void*)&((struct sockaddr_in6*)ifa->ifa_netmask)->sin6_addr;
+                    
+                    if (family == AF_INET) {
+                        // For IPv4, convert to dotted decimal
+                        char mask_buf[INET_ADDRSTRLEN];
+                        if (inet_ntop(family, mask_ptr, mask_buf, sizeof(mask_buf))) {
+                            *netmask = mask_buf;
+                        }
+                    } else {
+                        // For IPv6, calculate prefix length from netmask
+                        struct in6_addr* mask6 = (struct in6_addr*)mask_ptr;
+                        int prefix_len = 0;
+                        for (int i = 0; i < 16; i++) {
+                            unsigned char byte = mask6->s6_addr[i];
+                            for (int bit = 7; bit >= 0; bit--) {
+                                if (byte & (1 << bit)) {
+                                    prefix_len++;
+                                } else {
+                                    // Once we hit a zero bit, stop counting
+                                    goto done_counting;
+                                }
+                            }
+                        }
+                    done_counting:
+                        *netmask = std::to_string(prefix_len);
+                    }
+                }
+                
+                found = true;
+                break;
+            }
+        }
+        
+        freeifaddrs(ifaddr);
+        return found;
+    }
+
+    bool GetInterfaceAddressNative(const char* interface_name, IpVersion version,
+                                   std::string* address) {
+        return GetInterfaceInfoNative(interface_name, version, address, nullptr);
+    }
+
+    bool GetInterfaceNetmaskNative(const char* interface_name, IpVersion version,
+                                   std::string* netmask) {
+        return GetInterfaceInfoNative(interface_name, version, nullptr, netmask);
+    }
+
+    // Parse IPv4 gateway from /proc/net/route (hex little-endian format)
+    bool GetIpv4GatewayNative(const char* interface_name, std::string* gateway) {
+        std::ifstream route_file("/proc/net/route");
+        if (!route_file.is_open()) {
+            LOG(WARNING) << "Failed to open /proc/net/route: " << strerror(errno);
+            return false;
+        }
+        
+        std::string line;
+        // Skip header line
+        std::getline(route_file, line);
+        
+        while (std::getline(route_file, line)) {
+            std::istringstream iss(line);
+            std::string iface, dest_hex, gateway_hex, flags_hex;
+            
+            iss >> iface >> dest_hex >> gateway_hex >> flags_hex;
+            
+            // Check if this is the default route (destination = 00000000)
+            // and matches our interface
+            if (dest_hex == "00000000" && iface == interface_name) {
+                // Parse gateway from hex (little-endian)
+                if (gateway_hex == "00000000") {
+                    continue;  // No gateway (0.0.0.0)
+                }
+                
+                // Convert hex to IP address (little-endian)
+                unsigned long gw = std::stoul(gateway_hex, nullptr, 16);
+                *gateway = android::base::StringPrintf("%lu.%lu.%lu.%lu",
+                    (gw & 0xFF),
+                    ((gw >> 8) & 0xFF),
+                    ((gw >> 16) & 0xFF),
+                    ((gw >> 24) & 0xFF));
+                
+                LOG(INFO) << "Found IPv4 gateway via /proc/net/route: " << *gateway;
+            return true;
+        }
+        }
+        
+        return false;
+    }
+    
+    // Parse IPv6 gateway from /proc/net/ipv6_route
+    bool GetIpv6GatewayNative(const char* interface_name, std::string* gateway) {
+        std::ifstream route_file("/proc/net/ipv6_route");
+        if (!route_file.is_open()) {
+            LOG(WARNING) << "Failed to open /proc/net/ipv6_route: " << strerror(errno);
+            return false;
+        }
+        
+        std::string line;
+        while (std::getline(route_file, line)) {
+            std::istringstream iss(line);
+            std::string dest, dest_prefix, src, src_prefix, next_hop, metric, refcnt, use, flags, iface;
+            
+            // Format: dest destprefix src srcprefix nexthop metric refcnt use flags iface
+            iss >> dest >> dest_prefix >> src >> src_prefix >> next_hop >> metric >> refcnt >> use >> flags >> iface;
+            
+            // Check if this is a default route (dest = all zeros, prefix = 00)
+            // and matches our interface
+            if (dest == "00000000000000000000000000000000" && dest_prefix == "00" && iface == interface_name) {
+                // Check if there's actually a gateway (next_hop != all zeros)
+                if (next_hop == "00000000000000000000000000000000") {
+                    continue;  // No gateway
+                }
+                
+                // Parse next_hop (32 hex chars = 16 bytes = 128 bits)
+                // Format IPv6 address from hex string
+                if (next_hop.length() != 32) {
+                    continue;
+                }
+                
+                // Convert to standard IPv6 notation (8 groups of 4 hex digits)
+                std::string ipv6;
+                for (size_t i = 0; i < 32; i += 4) {
+                    if (i > 0) ipv6 += ":";
+                    ipv6 += next_hop.substr(i, 4);
+                }
+                
+                // Simplify IPv6 address (remove leading zeros)
+                *gateway = ipv6;
+                
+                LOG(INFO) << "Found IPv6 gateway via /proc/net/ipv6_route: " << *gateway;
+    return true;
+            }
+        }
+        
+        return false;
+    }
+
+    // Read kernel log buffer using klogctl() syscall
+    bool ReadKernelLogNative(FastbootDevice* device) {
+        int buffer_size = klogctl(10, nullptr, 0);  // Get buffer size
+        if (buffer_size < 0) {
+            LOG(WARNING) << "klogctl(SIZE_BUFFER) failed: " << strerror(errno);
+            return false;
+        }
+
+        std::vector<char> buffer(buffer_size + 1);
+        
+        int bytes_read = klogctl(3, buffer.data(), buffer_size);  // Read all messages
+        if (bytes_read < 0) {
+            LOG(WARNING) << "klogctl(READ_ALL) failed: " << strerror(errno);
+            return false;
+        }
+        
+        buffer[bytes_read] = '\0';
+        
+        std::istringstream stream(buffer.data());
+        std::string line;
+        while (std::getline(stream, line)) {
+            if (!device->WriteInfo(line)) {
+                LOG(ERROR) << "Failed to write kernel log line to device";
+                return false;
+            }
+        }
+        
+        LOG(INFO) << "Read kernel log via klogctl - " << bytes_read << " bytes";
+        return true;
+    }
+
     // Check if address matches IP version
     bool IsIpVersion(const std::string& addr, IpVersion version) {
         bool has_colon = addr.find(':') != std::string::npos;
@@ -298,7 +523,7 @@ namespace {
             case IpVersion::V6:
                 return has_colon;
             case IpVersion::BOTH:
-                return true;
+            return true;
         }
         return false;
     }
@@ -320,9 +545,9 @@ namespace {
                 iss >> addr;
                 if (addr.find('.') != std::string::npos) {
                     *address = addr;
-                    return true;
-                }
-                
+    return true;
+}
+
                 // Try older format with "addr:" prefix
                 pos = inet_part.find("addr:");
                 if (pos != std::string::npos) {
@@ -347,13 +572,13 @@ namespace {
                 pos = inet_part.find('/');
                 if (pos != std::string::npos) {
                     *address = inet_part.substr(0, pos);
-                    return true;
+            return true;
                 }
             }
         }
         
-        return false;
-    }
+            return false;
+        }
 
     // Parse IPv6 address from ifconfig or ip command output (skip link-local)
     bool ParseIpv6Address(const std::string& output, std::string* address) {
@@ -389,9 +614,9 @@ namespace {
                 
                 if (addr.find(':') != std::string::npos) {
                     *address = addr;
-                    return true;
-                }
-                
+    return true;
+}
+
                 // Try alternative format with "addr:" prefix
                 pos = inet_part.find("addr:");
                 if (pos != std::string::npos) {
@@ -444,12 +669,12 @@ namespace {
                 
                 if (IsIpVersion(gw, version)) {
                     *gateway = gw;
-                    return true;
+            return true;
                 }
             }
         }
-        return false;
-    }
+            return false;
+        }
 
     // Parse gateway from ip route output (format: "default via X.X.X.X dev ...")
     bool ParseGatewayFromIpRouteOutput(const std::string& output, std::string* gateway) {
@@ -463,7 +688,7 @@ namespace {
                 pos = via_part.find(' ');
                 if (pos != std::string::npos) {
                     *gateway = via_part.substr(0, pos);
-                    return true;
+    return true;
                 }
             }
         }
@@ -512,7 +737,7 @@ namespace {
             pos = line.find("Mask:");
             if (pos != std::string::npos) {
                 *netmask = line.substr(pos + 5);
-                return true;
+            return true;
             }
             
             // For IPv6, look for "prefixlen"
@@ -533,14 +758,14 @@ namespace {
                 pos = after_slash.find(" ");
                 if (pos != std::string::npos) {
                     *netmask = after_slash.substr(0, pos);
-                } else {
+        } else {
                     *netmask = after_slash;
                 }
                 return true;
             }
         }
-        return false;
-    }
+            return false;
+        }
 
     // Parse prefix from ip command output
     bool ParsePrefixFromIpOutput(const std::string& output, IpVersion version, 
@@ -568,7 +793,7 @@ namespace {
                 } else {
                     *prefix = prefix_str;
                 }
-                return true;
+    return true;
             }
         }
         return false;
@@ -1264,6 +1489,14 @@ bool GetDmesg(FastbootDevice* device) {
     //    return device->WriteFail("Cannot use when device flashing is locked");
     //}
 
+    // Try klogctl() first
+    if (ReadKernelLogNative(device)) {
+        return true;
+    }
+
+    // Fallback to dmesg command
+    LOG(WARNING) << "klogctl() failed, falling back to dmesg command";
+
     posix_spawn_file_actions_t action;
     posix_spawn_file_actions_init(&action);
     posix_spawn_file_actions_addopen(&action, STDOUT_FILENO, "/tmp/dmesg.log", O_WRONLY | O_CREAT, 0644);
@@ -1346,14 +1579,25 @@ bool GetPrivkey(FastbootDevice* /* device */, const std::vector<std::string>& /*
 
 bool GetIpv4Address(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
                 std::string* message) {
-    std::string output;
-    const char* output_file = "/tmp/ipv4-address.log";
-    
-    // Try both interfaces
+    // Try native getifaddrs() first
     for (size_t i = 0; i < kNumNetworkInterfaces; ++i) {
         const char* interface = kNetworkInterfaces[i];
         
-        // Try ifconfig first
+        if (GetInterfaceAddressNative(interface, IpVersion::V4, message)) {
+            LOG(INFO) << "Got IPv4 address for " << interface << ": " << *message;
+            return true;
+        }
+    }
+    
+    // Fallback to commands
+    LOG(WARNING) << "getifaddrs() failed, falling back to ifconfig/ip commands";
+    std::string output;
+    const char* output_file = "/tmp/ipv4-address.log";
+    
+    for (size_t i = 0; i < kNumNetworkInterfaces; ++i) {
+        const char* interface = kNetworkInterfaces[i];
+        
+        // Try ifconfig
         if (TryExecuteCommand({"/sbin/ifconfig", "/usr/sbin/ifconfig", "/bin/ifconfig"},
                              {interface}, output_file, &output)) {
             if (ParseIpv4Address(output, message)) {
@@ -1376,17 +1620,28 @@ bool GetIpv4Address(FastbootDevice* /* device */, const std::vector<std::string>
 
 bool GetIpv4Gateway(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
                   std::string* message) {
+    // Try native /proc/net/route parsing first
+    for (size_t i = 0; i < kNumNetworkInterfaces; ++i) {
+        const char* interface = kNetworkInterfaces[i];
+        
+        if (GetIpv4GatewayNative(interface, message)) {
+            LOG(INFO) << "Got IPv4 gateway for " << interface << ": " << *message;
+            return true;
+        }
+    }
+    
+    // Fallback to commands
+    LOG(WARNING) << "/proc parsing failed, falling back to route/ip commands";
     std::string output;
     const char* output_file = "/tmp/ipv4-gateway.log";
     
-    // Try both interfaces
     for (size_t i = 0; i < kNumNetworkInterfaces; ++i) {
         const char* interface = kNetworkInterfaces[i];
         
         // Try route -n command
         if (TryExecuteCommand({"/sbin/route"}, {"-n"}, output_file, &output)) {
             if (ParseGatewayFromRouteOutput(output, interface, IpVersion::V4, message)) {
-                return true;
+                            return true;
             }
         }
         
@@ -1405,17 +1660,28 @@ bool GetIpv4Gateway(FastbootDevice* /* device */, const std::vector<std::string>
 
 bool GetIpv4Netmask(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
                    std::string* message) {
+    // Try native getifaddrs() first
+    for (size_t i = 0; i < kNumNetworkInterfaces; ++i) {
+        const char* interface = kNetworkInterfaces[i];
+        
+        if (GetInterfaceNetmaskNative(interface, IpVersion::V4, message)) {
+            LOG(INFO) << "Got IPv4 netmask for " << interface << ": " << *message;
+            return true;
+        }
+    }
+    
+    // Fallback to commands
+    LOG(WARNING) << "getifaddrs() failed, falling back to ifconfig/ip commands";
     std::string output;
     const char* output_file = "/tmp/ipv4-netmask.log";
     
-    // Try both interfaces
     for (size_t i = 0; i < kNumNetworkInterfaces; ++i) {
         const char* interface = kNetworkInterfaces[i];
         
         // Try ifconfig first
         if (TryExecuteCommand({"/sbin/ifconfig"}, {interface}, output_file, &output)) {
             if (ParseNetmaskFromIfconfig(output, IpVersion::V4, message)) {
-                return true;
+                    return true;
             }
         }
         
@@ -1428,9 +1694,9 @@ bool GetIpv4Netmask(FastbootDevice* /* device */, const std::vector<std::string>
                     int prefix_len = std::stoi(prefix);
                     *message = CidrToNetmask(prefix_len);
                     if (!message->empty()) {
-                        return true;
-                    }
-                } catch (const std::exception& e) {
+                                return true;
+                            }
+                        } catch (const std::exception& e) {
                     // Continue to next interface
                 }
             }
@@ -1448,14 +1714,25 @@ bool GetIpv4Dns(FastbootDevice* /* device */, const std::vector<std::string>& /*
 
 bool GetIpv6Address(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
                   std::string* message) {
-    std::string output;
-    const char* output_file = "/tmp/ipv6-address.log";
-    
-    // Try both interfaces
+    // Try native getifaddrs() first
     for (size_t i = 0; i < kNumNetworkInterfaces; ++i) {
         const char* interface = kNetworkInterfaces[i];
         
-        // Try ifconfig first
+        if (GetInterfaceAddressNative(interface, IpVersion::V6, message)) {
+            LOG(INFO) << "Got IPv6 address for " << interface << ": " << *message;
+            return true;
+        }
+    }
+    
+    // Fallback to commands
+    LOG(WARNING) << "getifaddrs() failed, falling back to ip commands";
+    std::string output;
+    const char* output_file = "/tmp/ipv6-address.log";
+    
+    for (size_t i = 0; i < kNumNetworkInterfaces; ++i) {
+        const char* interface = kNetworkInterfaces[i];
+        
+        // Try ifconfig
         if (TryExecuteCommand({"/sbin/ifconfig", "/usr/sbin/ifconfig", "/bin/ifconfig"},
                              {interface}, output_file, &output)) {
             if (ParseIpv6Address(output, message)) {
@@ -1467,8 +1744,8 @@ bool GetIpv6Address(FastbootDevice* /* device */, const std::vector<std::string>
         if (TryExecuteCommand({"/sbin/ip", "/usr/sbin/ip", "/bin/ip"},
                              {"-6", "addr", "show", "dev", interface}, output_file, &output)) {
             if (ParseIpv6Address(output, message)) {
-                return true;
-            }
+                    return true;
+                }
         }
     }
     
@@ -1478,17 +1755,28 @@ bool GetIpv6Address(FastbootDevice* /* device */, const std::vector<std::string>
 
 bool GetIpv6Gateway(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
                   std::string* message) {
+    // Try native /proc/net/ipv6_route parsing first
+    for (size_t i = 0; i < kNumNetworkInterfaces; ++i) {
+        const char* interface = kNetworkInterfaces[i];
+        
+        if (GetIpv6GatewayNative(interface, message)) {
+            LOG(INFO) << "Got IPv6 gateway for " << interface << ": " << *message;
+            return true;
+        }
+    }
+    
+    // Fallback to commands
+    LOG(WARNING) << "/proc parsing failed, falling back to ip commands";
     std::string output;
     const char* output_file = "/tmp/ipv6-gateway.log";
     
-    // Try both interfaces
     for (size_t i = 0; i < kNumNetworkInterfaces; ++i) {
         const char* interface = kNetworkInterfaces[i];
         
         // Try route -6 -n command
         if (TryExecuteCommand({"/sbin/route"}, {"-n", "-6"}, output_file, &output)) {
             if (ParseGatewayFromRouteOutput(output, interface, IpVersion::V6, message)) {
-                return true;
+                            return true;
             }
         }
         
@@ -1507,17 +1795,28 @@ bool GetIpv6Gateway(FastbootDevice* /* device */, const std::vector<std::string>
 
 bool GetIpv6Netmask(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
                    std::string* message) {
+    // Try native getifaddrs() first (returns prefix length, e.g. "64")
+    for (size_t i = 0; i < kNumNetworkInterfaces; ++i) {
+        const char* interface = kNetworkInterfaces[i];
+        
+        if (GetInterfaceNetmaskNative(interface, IpVersion::V6, message)) {
+            LOG(INFO) << "Got IPv6 prefix for " << interface << ": " << *message;
+            return true;
+        }
+    }
+    
+    // Fallback to commands
+    LOG(WARNING) << "getifaddrs() failed, falling back to ip commands";
     std::string output;
     const char* output_file = "/tmp/ipv6-netmask.log";
     
-    // Try both interfaces (IPv6 netmask is actually prefix length, e.g., "64")
     for (size_t i = 0; i < kNumNetworkInterfaces; ++i) {
         const char* interface = kNetworkInterfaces[i];
         
         // Try ifconfig first
         if (TryExecuteCommand({"/sbin/ifconfig"}, {interface}, output_file, &output)) {
             if (ParseNetmaskFromIfconfig(output, IpVersion::V6, message)) {
-                return true;
+                            return true;
             }
         }
         
@@ -1525,7 +1824,7 @@ bool GetIpv6Netmask(FastbootDevice* /* device */, const std::vector<std::string>
         if (TryExecuteCommand({"/sbin/ip"}, {"-6", "addr", "show", "dev", interface}, 
                              output_file, &output)) {
             if (ParsePrefixFromIpOutput(output, IpVersion::V6, message)) {
-                return true;
+                            return true;
             }
         }
     }

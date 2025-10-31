@@ -29,6 +29,16 @@
 #include <android-base/stringprintf.h>
 #include <android-base/strings.h>
 #include <android-base/unique_fd.h>
+
+// GPIO control via libgpiod (conditional compilation)
+#ifdef HAVE_LIBGPIOD
+#include <gpiod.h>
+#endif
+
+// Crypto operations via libcryptsetup (conditional compilation)
+#ifdef HAVE_LIBCRYPTSETUP
+#include "crypto_native.h"
+#endif
 // #include <android/hardware/boot/1.1/IBootControl.h>
 // #include <cutils/android_reboot.h>
 // #include <ext4_utils/wipe.h>
@@ -630,7 +640,25 @@ namespace {
             return device->WriteFail("USB devices not supported for LUKS encryption");
         }
 
-        // Write key to temporary file
+        PartitionHandle handle;
+        if (!OpenPartition(device, block_device, &handle, O_WRONLY | O_DIRECT)) {
+            return device->WriteFail("Cannot create context for device " + block_device + " as failed to open");
+        }
+
+        std::string cipher = "aes-xts-plain64";
+        if (args.size() >= 5) {
+            cipher = args[4];
+        }
+
+#ifdef HAVE_LIBCRYPTSETUP
+        std::string error_msg;
+        if (CryptInitNative(block_device, args[3], cipher, luks_key, &error_msg)) {
+            return device->WriteOkay("LUKS device formatted successfully");
+        }
+        
+        LOG(WARNING) << "libcryptsetup failed: " << error_msg << ", falling back to command";
+#endif
+
         std::string temp_keyfile = "/tmp/luks_key.tmp";
         std::ofstream keyfile_stream(temp_keyfile);
         if (!keyfile_stream) {
@@ -639,16 +667,7 @@ namespace {
         keyfile_stream << luks_key;
         keyfile_stream.close();
 
-        PartitionHandle handle;
-        if (!OpenPartition(device, block_device, &handle, O_WRONLY | O_DIRECT)) {
-            std::remove(temp_keyfile.c_str());
-            return device->WriteFail("Cannot create context for device " + block_device + " as failed to open");
-        }
-
-        std::string cipher = "--cipher=aes-xts-plain64";
-
-        if (args.size() >= 5)
-            cipher = "--cipher=" + args[4];
+        std::string cipher_arg = "--cipher=" + cipher;
 
         char cryptsetup[]     = "cryptsetup";
         char batch_mode[]     = "--batch-mode";
@@ -660,11 +679,11 @@ namespace {
             cryptsetup,
             batch_mode,
             luksFormat,
-            const_cast<char *>(cipher.c_str()),
+            const_cast<char *>(cipher_arg.c_str()),
             label,
-            const_cast<char *>(args[3].c_str()), //!< Inserted
+            const_cast<char *>(args[3].c_str()),
             force_password,
-            const_cast<char *>(block_device.c_str()), //!< Appended
+            const_cast<char *>(block_device.c_str()),
             (char*)"--key-file",
             const_cast<char *>(temp_keyfile.c_str()),
             NULL
@@ -673,7 +692,6 @@ namespace {
         int subprocess_rc = -1;
         int ret = rpi::process_spawn_blocking(&subprocess_rc, "cryptsetup", argv, NULL);
 
-        // Clean up temporary keyfile
         std::remove(temp_keyfile.c_str());
 
         if (ret) {
@@ -703,7 +721,24 @@ namespace {
             return device->WriteFail("USB devices not supported for LUKS encryption");
         }
 
-        // Write key to temporary file
+        PartitionHandle handle;
+        if (!OpenPartition(device, block_device_path, &handle, O_WRONLY | O_DIRECT)) {
+            return device->WriteFail("Cannot perform cryptopen for device " + block_device_path + " as failed to open.");
+        }
+
+        if (args[3].empty()) {
+            return device->WriteFail("Cannot perform cryptopen for device " + block_device_path + " as no mapped name specified.");
+        }
+
+#ifdef HAVE_LIBCRYPTSETUP
+        std::string error_msg;
+        if (CryptOpenNative(block_device_path, mapped_name, luks_key, &error_msg)) {
+            return device->WriteOkay("LUKS device opened successfully");
+        }
+        
+        LOG(WARNING) << "libcryptsetup failed: " << error_msg << ", falling back to command";
+#endif
+
         std::string temp_keyfile = "/tmp/luks_key_open.tmp";
         std::ofstream keyfile_stream(temp_keyfile);
         if (!keyfile_stream) {
@@ -711,18 +746,6 @@ namespace {
         }
         keyfile_stream << luks_key;
         keyfile_stream.close();
-
-        PartitionHandle handle;
-        if (!OpenPartition(device, block_device_path, &handle, O_WRONLY | O_DIRECT)) {
-            std::remove(temp_keyfile.c_str());
-            return device->WriteFail("Cannot perform cryptopen for device " + block_device_path + " as failed to open.");
-        }
-
-        // Will appear as /dev/disk/by-label/<part_label> once opened
-        if (args[3].empty()) {
-            std::remove(temp_keyfile.c_str());
-            return device->WriteFail("Cannot perform cryptopen for device " + block_device_path + " as no mapped name specified.");
-        }
 
         char cryptsetup[] = "cryptsetup";
         char luksOpen[]   = "luksOpen";
@@ -740,7 +763,6 @@ namespace {
         int subprocess_rc = -1;
         int ret = rpi::process_spawn_blocking(&subprocess_rc, "cryptsetup", argv, NULL);
 
-        // Clean up temporary keyfile
         std::remove(temp_keyfile.c_str());
 
         if (ret) {
@@ -768,6 +790,20 @@ static bool oem_cmd_cryptsetpassword(FastbootDevice* device, const std::vector<s
     if (luks_key == "ERROR_USB_NOT_SUPPORTED") {
         return device->WriteFail("USB devices not supported for LUKS encryption");
     }
+
+#ifdef HAVE_LIBCRYPTSETUP
+    std::string error_msg;
+    bool remove_passphrase = user_passphrase.empty();
+    if (CryptSetPasswordNative(block_device, luks_key, user_passphrase, remove_passphrase, &error_msg)) {
+        if (remove_passphrase) {
+            return device->WriteOkay("User passphrase removed");
+        } else {
+            return device->WriteOkay("User passphrase set successfully");
+        }
+    }
+    
+    LOG(WARNING) << "libcryptsetup failed: " << error_msg << ", falling back to command";
+#endif
 
     std::string temp_hw_keyfile = "/tmp/luks_hw_key.tmp";
     std::ofstream hw_keyfile_stream(temp_hw_keyfile);
@@ -950,11 +986,128 @@ ssize_t bulk_write(int bulk_in, const char *buf, size_t length)
         return device->WriteStatus(FastbootResult::OKAY, "Write Successful!");
     }
 
+// Native GPIO control using libgpiod v2.x API
+#ifdef HAVE_LIBGPIOD
+    // Parse and set GPIO lines: "chip line=value [line=value...]"
+    // Example: "gpiochip0 23=1" or "gpiochip0 23=1 24=0"
+    bool SetGpioLinesNative(FastbootDevice* device, const std::vector<std::string>& args) {
+        if (args.size() < 3) {
+            return false;
+        }
+        
+        const std::string& chip_name = args[1];
+        
+        std::vector<unsigned int> line_nums;
+        std::vector<int> line_values;
+        
+        for (size_t i = 2; i < args.size(); i++) {
+            size_t eq_pos = args[i].find('=');
+            if (eq_pos == std::string::npos) {
+                LOG(WARNING) << "Invalid GPIO line format: " << args[i];
+                return false;
+            }
+            
+            try {
+                unsigned int line_num = std::stoul(args[i].substr(0, eq_pos));
+                int value = std::stoi(args[i].substr(eq_pos + 1));
+                
+                line_nums.push_back(line_num);
+                line_values.push_back(value ? 1 : 0);  // Normalize to 0 or 1
+            } catch (const std::exception& e) {
+                LOG(WARNING) << "Failed to parse GPIO line: " << args[i] 
+                            << " - " << e.what();
+                return false;
+            }
+        }
+        
+        struct gpiod_chip* chip = gpiod_chip_open(("/dev/" + chip_name).c_str());
+        if (!chip) {
+            LOG(WARNING) << "Failed to open GPIO chip '" << chip_name 
+                        << "': " << strerror(errno);
+            return false;
+        }
+        
+        struct gpiod_line_settings* settings = gpiod_line_settings_new();
+        if (!settings) {
+            gpiod_chip_close(chip);
+            LOG(WARNING) << "Failed to create line settings";
+            return false;
+        }
+        
+        gpiod_line_settings_set_direction(settings, GPIOD_LINE_DIRECTION_OUTPUT);
+        
+        struct gpiod_line_config* line_cfg = gpiod_line_config_new();
+        if (!line_cfg) {
+            gpiod_line_settings_free(settings);
+            gpiod_chip_close(chip);
+            LOG(WARNING) << "Failed to create line config";
+            return false;
+        }
+        
+        for (size_t i = 0; i < line_nums.size(); i++) {
+            gpiod_line_settings_set_output_value(settings, 
+                static_cast<enum gpiod_line_value>(line_values[i]));
+            
+            int ret = gpiod_line_config_add_line_settings(line_cfg, &line_nums[i], 1, settings);
+            if (ret < 0) {
+                gpiod_line_config_free(line_cfg);
+                gpiod_line_settings_free(settings);
+                gpiod_chip_close(chip);
+                LOG(WARNING) << "Failed to add line " << line_nums[i] << " to config";
+                return false;
+            }
+        }
+        
+        struct gpiod_request_config* req_cfg = gpiod_request_config_new();
+        if (!req_cfg) {
+            gpiod_line_config_free(line_cfg);
+            gpiod_line_settings_free(settings);
+            gpiod_chip_close(chip);
+            LOG(WARNING) << "Failed to create request config";
+            return false;
+        }
+        
+        gpiod_request_config_set_consumer(req_cfg, "fastbootd");
+        
+        struct gpiod_line_request* request = gpiod_chip_request_lines(chip, req_cfg, line_cfg);
+        
+        gpiod_request_config_free(req_cfg);
+        gpiod_line_config_free(line_cfg);
+        gpiod_line_settings_free(settings);
+        
+        if (!request) {
+            gpiod_chip_close(chip);
+            LOG(WARNING) << "Failed to request GPIO lines: " << strerror(errno);
+            return false;
+        }
+        
+        for (size_t i = 0; i < line_nums.size(); i++) {
+            LOG(INFO) << "Set GPIO " << chip_name << " line " << line_nums[i] 
+                     << " to " << line_values[i];
+        }
+        
+        gpiod_line_request_release(request);
+        gpiod_chip_close(chip);
+        
+        return true;
+    }
+#endif // HAVE_LIBGPIOD
+
     static bool oem_cmd_gpioset(FastbootDevice* device, const std::vector<std::string>& args) {
         if (args.size() < 3) {
             return device->WriteFail("oem gpioset [OPTIONS] <line=value>...");
         }
 
+#ifdef HAVE_LIBGPIOD
+        // Try libgpiod first
+        if (SetGpioLinesNative(device, args)) {
+            return device->WriteOkay("GPIO set successfully");
+        }
+        
+        LOG(WARNING) << "libgpiod failed, falling back to gpioset command";
+#endif
+
+            // Fallback to gpioset command
         // Convert gpioset_args to char* array
         std::vector<char *> argv_vec(args.size());
         // Advance beyond 'oem'

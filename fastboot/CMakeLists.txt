@@ -15,6 +15,7 @@ set(SOURCES
     device/tcp_client.cpp
     device/utility.cpp
     device/variables.cpp
+    device/crypto_native.cpp
     socket.cpp
 )
 
@@ -22,6 +23,12 @@ find_package(PkgConfig REQUIRED)
 pkg_check_modules(FDISK REQUIRED fdisk)
 pkg_check_modules(URING REQUIRED liburing)
 pkg_check_modules(SYSTEMD REQUIRED libsystemd)
+
+# GPIO control via libgpiod (optional - falls back to command if not available)
+pkg_check_modules(GPIOD libgpiod)
+
+# Crypto operations via libcryptsetup (optional - falls back to command if not available)
+pkg_check_modules(CRYPTSETUP libcryptsetup)
 
 find_package(ZLIB REQUIRED)
 
@@ -41,11 +48,30 @@ check_header_fatal(android-base/logging.h android-libbase-dev)
 check_header_fatal(cutils/sockets.h android-libcutils-dev)
 
 add_executable(fastbootd ${SOURCES})
+
+# Define HAVE_LIBGPIOD if libgpiod is available
+if(GPIOD_FOUND)
+    message(STATUS "libgpiod found - enabling native GPIO control")
+    target_compile_definitions(fastbootd PRIVATE HAVE_LIBGPIOD)
+else()
+    message(STATUS "libgpiod not found - will use gpioset command fallback")
+endif()
+
+# Define HAVE_LIBCRYPTSETUP if libcryptsetup is available
+if(CRYPTSETUP_FOUND)
+    message(STATUS "libcryptsetup found - enabling native LUKS operations")
+    target_compile_definitions(fastbootd PRIVATE HAVE_LIBCRYPTSETUP)
+else()
+    message(STATUS "libcryptsetup not found - will use cryptsetup command fallback")
+endif()
+
 target_compile_definitions(fastbootd PRIVATE ${COMMON_CPPFLAGS})
 target_compile_options(fastbootd PRIVATE
     ${FDISK_CFLAGS_OTHER}
     ${URING_CFLAGS_OTHER}
     ${SYSTEMD_CFLAGS_OTHER}
+    ${GPIOD_CFLAGS_OTHER}
+    ${CRYPTSETUP_CFLAGS_OTHER}
 )
 target_include_directories(fastbootd PRIVATE 
     ${CMAKE_CURRENT_SOURCE_DIR}
@@ -55,6 +81,8 @@ target_include_directories(fastbootd PRIVATE
     ${URING_INCLUDE_DIRS}
     ${ZLIB_INCUDE_DIRS}
     ${SYSTEMD_INCLUDE_DIRS}
+    ${GPIOD_INCLUDE_DIRS}
+    ${CRYPTSETUP_INCLUDE_DIRS}
     ${CMAKE_CURRENT_LIST_DIR}/../rpiparted/include
 )
 
@@ -65,6 +93,8 @@ target_link_libraries(fastbootd PRIVATE
     ${FDISK_LIBRARIES}
     ${URING_LIBRARIES}
     ${SYSTEMD_LIBRARIES}
+    ${GPIOD_LIBRARIES}
+    ${CRYPTSETUP_LIBRARIES}
     asyncio
     cutils
     log
@@ -96,4 +126,9 @@ install(DIRECTORY systemd/bin
 		GROUP_READ GROUP_EXECUTE
 		WORLD_READ WORLD_EXECUTE
 )
+
+# Add test subdirectory
+if(BUILD_TESTING)
+    add_subdirectory(device/test)
+endif()
 
