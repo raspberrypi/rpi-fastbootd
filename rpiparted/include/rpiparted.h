@@ -14,6 +14,27 @@ private:
     bool* assigned_;
 };
 
+struct PartitionAttributes {
+    // Size of the new partition in bytes.
+    // - 0: consume all remaining free space on the device.
+    uint64_t size_bytes;
+
+    // Partition type identifier:
+    // - DOS/MBR: hex type code as string (e.g. "83", "0x83", "c", "0xc").
+    // - GPT: type GUID string (e.g. "C12A7328-F81F-11D2-BA4B-00A0C93EC93B").
+    std::string type_id;
+
+    // Optional human-readable partition name (Linux::PARTLABEL)
+    // - Applied only when operating on a GPT label (ignored on DOS/MBR).
+    // - GPT stores up to 36 UTF‑16 code points.
+    std::optional<std::string> partlabel;
+
+    // Optional partition UUID (Linux::PARTUUID).
+    // - Applied only when operating on a GPT label (ignored on DOS/MBR).
+    // - Must be a valid UUID string (8-4-4-4-12 hex).
+    std::optional<std::string> partuuid;
+};
+
 class RPIparted {
 public:
     RPIparted();
@@ -49,13 +70,11 @@ public:
     /**
      * @brief Add a new partition table entry with defaults for number,start
      *
-     * @param size_bytes Size of the partition required. If zero, all remaining
-     *                   space on the device will be consumed
-     * @param type DOS/GPT identifier of the partition to create
+     * @param attrs The new partition attributes
      *
      * @return True on success. False on failure.
      */
-    bool appendPartition(const uint64_t size_bytes, const std::string& type);
+    bool appendPartition(const PartitionAttributes& attrs);
 
     /**
      * @brief Remove a partition from the table

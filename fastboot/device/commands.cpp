@@ -500,16 +500,19 @@ namespace {
             return device->WriteStatus(FastbootResult::FAIL, "Incorrect block device. " PARTAPP_USAGE);
         }
 
-        uint64_t size = 0;
+        PartitionAttributes attrs{};
+        attrs.type_id = partition_type;
+        attrs.size_bytes = 0; // default: consume remaining
+
         if (args.size() == 5) {
             auto size_string = args[4];
 
-            if (!android::base::ParseUint(size_string, &size)) {
+            if (!android::base::ParseUint(size_string, &attrs.size_bytes)) {
                 return device->WriteStatus(FastbootResult::FAIL, "Unable to parse partition size. " PARTAPP_USAGE);
             }
         }
 
-        if (!disk.appendPartition(size, partition_type.c_str())) {
+        if (!disk.appendPartition(attrs)) {
             return device->WriteStatus(FastbootResult::FAIL, "Failed to append partition. " PARTAPP_USAGE);
         }
 

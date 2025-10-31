@@ -16,12 +16,15 @@
 class IDPdeviceWriter;
 
 struct IDPpartition {
+    bool expand_to_fit = false;
     std::uint32_t num;
     std::optional<std::string> img;
     std::optional<std::string> simg;
     std::uint64_t size;
     std::uint64_t aligned_size;
-    std::optional<std::string> pcode;
+    std::optional<std::string> typecode;
+    std::optional<std::string> gptlabel;
+    std::optional<std::string> gptuuid;
     std::optional<IDPluks> luks;
 
     bool isCryptContainer() const { return luks.has_value(); }
@@ -34,6 +37,7 @@ struct IDPpartition {
     int getIndex() const { return index; }
     int getParentIndex() const { return parent_index; }
     std::uint64_t getSize(bool aligned, const std::optional<std::reference_wrapper<const std::vector<IDPpartition>>>& all) const;
+    bool expandToFit() const { return expand_to_fit; }
 
 private:
     friend class IDPdeviceWriter;

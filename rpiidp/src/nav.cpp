@@ -122,6 +122,10 @@ namespace Validation {
          }
       }
 
+      if (node.isMember("expand-to-fit") && !node["expand-to-fit"].isBool()) {
+         nr.error("Partition expand-to-fit must be a Bool");
+         return nr;
+      }
       return nr;
    }
 }
@@ -360,6 +364,9 @@ NavResult PartitionNavigator::processRegularPartitions(
             partition->uuid = s["uuid"].asString();
       }
 
+      if (p.isMember("expand-to-fit"))
+         partition->expand_to_fit = p["expand-to-fit"].asBool();
+
       partition->parent = parentPartition;
       partition->navigator = shared_from_this();
       partition->order = ++num;
@@ -397,6 +404,9 @@ std::shared_ptr<Partition> PartitionNavigator::createEncryptedPartition(
       luksConfig.uuid = luks["uuid"].asString();
    }
 
+   if (encryptedNode.isMember("expand-to-fit"))
+      encryptedPartition->expand_to_fit = encryptedNode["expand-to-fit"].asBool();
+
    encryptedPartition->luks = luksConfig;
    encryptedPartition->navigator = shared_from_this();
    encryptedPartition->order = ++num;
@@ -422,6 +432,11 @@ NavResult PartitionNavigator::processEncryptedNode(
       return nr;
    }
 
+   if (encryptedNode.isMember("expand-to-fit") && !encryptedNode["expand-to-fit"].isBool()) {
+      nr.error("Partition expand-to-fit must be a Bool");
+      return nr;
+   }
+
    std::shared_ptr<Partition> encryptedPartition;
    if (encryptedNode.isMember("slots") || encryptedNode.isMember("partitions")) {
       encryptedPartition = createEncryptedPartition(encryptedNode, num);
@@ -434,7 +449,6 @@ NavResult PartitionNavigator::processEncryptedNode(
 
    if (encryptedNode.isMember("slots")) {
       nr += processSlots(encryptedNode["slots"], result, num, encryptedPartition, false);
-      return nr;
    }
 
    if (encryptedNode.isMember("partitions")) {
@@ -625,16 +639,24 @@ PartitionNavigator::getPartitions(unsigned int& order) const
     }
 
     if (node.isObject()) {
-        if (!isEncryptedNode && node.isMember("partitions")) {
-            nr += processRegularPartitions(node["partitions"], result, order, nullptr);
-        }
-        if (node.isMember("encrypted")) {
-            nr += processEncryptedNode(node["encrypted"], result, order, nullptr);
-        }
-        if (!processNav(nr)) {
-           return {};
-        }
-    }
+       // currentSlot.empty() ensures we only process the true top level of the pmap.
+       // currentSlot is set when traversing inside a slots branch.
 
+       // Top-level partitions (skip when under slot/encrypted)
+       if (!isEncryptedNode && currentSlot.empty() && node.isMember("partitions")) {
+          nr += processRegularPartitions(node["partitions"], result, order, nullptr);
+       }
+       // Top-level slots (skip when under encrypted)
+       if (!isEncryptedNode && currentSlot.empty() && node.isMember("slots")) {
+          nr += processSlots(node["slots"], result, order, nullptr, /*processEncrypted=*/true);
+       }
+       // Top-level encrypted container
+       if (currentSlot.empty() && node.isMember("encrypted")) {
+          nr += processEncryptedNode(node["encrypted"], result, order, nullptr);
+       }
+       if (!processNav(nr)) {
+          return {};
+       }
+    }
     return result;
 }

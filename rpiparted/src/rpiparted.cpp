@@ -122,13 +122,13 @@ bool RPIparted::createPartitionTable(const std::string& type, const std::optiona
 }
 
 
-bool RPIparted::appendPartition(const uint64_t size_bytes, const std::string& type) {
+bool RPIparted::appendPartition(const PartitionAttributes& attrs) {
    if (!context_) {
       ERR("Bad context");
       return false;
    }
 
-   if (type.empty()) {
+   if (attrs.type_id.empty()) {
       ERR("Bad partition type");
       return false;
    }
@@ -148,9 +148,9 @@ bool RPIparted::appendPartition(const uint64_t size_bytes, const std::string& ty
    fdisk_partition_end_follow_default(new_part, 1);
    fdisk_partition_partno_follow_default(new_part, 1);
 
-   if (size_bytes) {
+   if (attrs.size_bytes) {
       // Minimum number of sectors required to accomodate the requested size
-      uint64_t size_sectors = (size_bytes + sector_size_ - 1) / sector_size_;
+      uint64_t size_sectors = (attrs.size_bytes + sector_size_ - 1) / sector_size_;
 
       // Alignment grain in sectors
       uint64_t grain_sectors = grain_ / sector_size_;
@@ -174,9 +174,9 @@ bool RPIparted::appendPartition(const uint64_t size_bytes, const std::string& ty
          fdisk_unref_partition(new_part);
          return false;
       }
-      part_type = fdisk_label_get_parttype_from_string(label, type.c_str());
+      part_type = fdisk_label_get_parttype_from_string(label, attrs.type_id.c_str());
       if (!part_type) {
-         ERR("Bad GUID: " << type);
+         ERR("Bad GUID: " << attrs.type_id);
          fdisk_unref_partition(new_part);
          return false;
       }
@@ -189,9 +189,9 @@ bool RPIparted::appendPartition(const uint64_t size_bytes, const std::string& ty
 
       unsigned int code;
 
-      if (1 != sscanf(type.c_str(), "%x", &code) ||
+      if (1 != sscanf(attrs.type_id.c_str(), "%x", &code) ||
             !(part_type = fdisk_label_get_parttype_from_code(label, code))) {
-         ERR("Bad ptype: " << type);
+         ERR("Bad ptype: " << attrs.type_id);
          fdisk_unref_partition(new_part);
          return false;
       }
@@ -199,6 +199,24 @@ bool RPIparted::appendPartition(const uint64_t size_bytes, const std::string& ty
 
    fdisk_partition_set_type(new_part, part_type);
    fdisk_unref_parttype(part_type);
+
+   // Set GPT attributes if requested and operating on GPT
+   if (is_gpt_) {
+      if (attrs.partlabel && !attrs.partlabel->empty()) {
+         if (fdisk_partition_set_name(new_part, attrs.partlabel->c_str()) != 0) {
+            ERR("Failed to set GPT partition label");
+            fdisk_unref_partition(new_part);
+            return false;
+         }
+      }
+      if (attrs.partuuid && !attrs.partuuid->empty()) {
+         if (fdisk_partition_set_uuid(new_part, attrs.partuuid->c_str()) != 0) {
+            ERR("Failed to set GPT partition UUID");
+            fdisk_unref_partition(new_part);
+            return false;
+         }
+      }
+   }
 
    int ret = fdisk_add_partition(context_.get(), new_part, nullptr);
    fdisk_unref_partition(new_part);

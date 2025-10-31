@@ -555,9 +555,17 @@ bool IDPdeviceWriter::WritePhysicalPartitions()
       return false;
    }
 
-   ret = parted.createPartitionTable(
-         device_->image_.device_storage.ptable_type == IDPptable_type::DOS ?
-         "DOS" : "GPT", std::nullopt);
+   if (device_->image_.device_storage.ptable_type == IDPptable_type::DOS) {
+      ret = parted.createPartitionTable("DOS", std::nullopt);
+   }
+   else {
+      std::optional<std::string> id = std::nullopt;
+      if (device_->image_.device_storage.ptable_id &&
+            !device_->image_.device_storage.ptable_id->empty()) {
+         id = device_->image_.device_storage.ptable_id;
+      }
+      ret = parted.createPartitionTable("GPT", id);
+   }
 
    if (!ret) {
       ERR("Failed to create partition table");
@@ -568,21 +576,32 @@ bool IDPdeviceWriter::WritePhysicalPartitions()
    // Create partitions
    for (auto& part : device_->partitions_) {
       if (part.getParentIndex() == -1) {
+         PartitionAttributes attrs{};
 
-         // When computing the size of a partition, ensure everything uses
-         // aligned sizes. This is especially important if sizing a LUKS
-         // container which can have any number of encapsulated children.
-         uint64_t sz = part.getSize(true, device_->partitions_);
+         attrs.type_id = *part.typecode;
+         if (part.expandToFit())
+            attrs.size_bytes = 0;
+         else
+            attrs.size_bytes = part.getSize(true, device_->partitions_);
+
+         // Optional GPT attributes
+         if (device_->image_.device_storage.ptable_type == IDPptable_type::GPT) {
+            if (part.gptlabel)
+               attrs.partlabel = *part.gptlabel;
+            if (part.gptuuid)
+               attrs.partuuid = *part.gptuuid;
+         }
 
          msg = ("Creating p" +
                std::to_string(part.num) +
                " on " +
                device_->image_.device_storage.BlockDev() +
                " size (bytes) " +
-               std::to_string(sz)); MSG(msg);
+               std::to_string(attrs.size_bytes) +
+              " type " + attrs.type_id); MSG(msg);
 
          // API auto aligns
-         ret = parted.appendPartition(sz, *part.pcode);
+         ret = parted.appendPartition(attrs);
 
          if (!ret)
             break;
@@ -676,16 +695,31 @@ bool IDPdeviceWriter::InitCryptPartitions()
                for (auto& child : device_->partitions_) {
                   if (child.getParentIndex() == part.getIndex() &&
                         child.isEncrypted(device_->partitions_)) {
-                     uint64_t sz = child.getSize(false, device_->partitions_);
+                     PartitionAttributes attrs{};
+
+                     attrs.type_id    = *child.typecode;
+                     if (child.expandToFit())
+                        attrs.size_bytes = 0;
+                     else
+                        attrs.size_bytes = child.getSize(false, device_->partitions_);
+
+                     // Optional GPT attributes
+                     if (device_->image_.device_storage.ptable_type == IDPptable_type::GPT) {
+                        if (child.gptlabel)
+                           attrs.partlabel = *child.gptlabel;
+                        if (child.gptuuid)
+                           attrs.partuuid = *child.gptuuid;
+                     }
 
                      msg = ("Creating p" +
                            std::to_string(child.num) +
                            " on " +
                            part.luks->BlockDev(0) +
                            " size (bytes) " +
-                           std::to_string(sz)); MSG(msg);
+                           std::to_string(attrs.size_bytes) +
+                           " type " + attrs.type_id); MSG(msg);
 
-                     ret = parted.appendPartition(sz,*child.pcode);
+                     ret = parted.appendPartition(attrs);
                   }
                   if (!ret)
                      break;

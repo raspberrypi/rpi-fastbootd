@@ -69,6 +69,12 @@ namespace {
                }
                out = root[key];
             }
+            else if constexpr (std::is_same_v<T, std::optional<std::string>>) {
+               if (!root[key].isString()) { error = std::string("Not a string: ") + key; return false; }
+               auto s = root[key].asString();
+               if (s.empty()) { error = std::string("Empty string not allowed for: ") + key; return false; }
+               out = std::move(s);
+            }
             // Add more types as needed
             return true;
          }
@@ -241,6 +247,7 @@ namespace {
 
       if (partition->isCryptContainer()) {
          MSG("Partition: [encrypted container]");
+         MSG("expand: " << (partition->expand_to_fit ? "yes" : "no"));
          if (partition->luks) {
             MSG("" << partition->luks->summary());
          }
@@ -258,12 +265,15 @@ namespace {
          MSG(" image name: " << partition->img_name);
          MSG(" image size: " << partition->img_size);
          MSG(" simg name: " << partition->simg_name);
-
+         if (partition->plabel)
+            MSG(" label: " << *partition->plabel);
+         if (partition->uuid)
+            MSG(" uuid: " << *partition->puuid);
          if (partition->role)
             MSG(" role: " << *partition->role);
-
+         MSG(" expand: " << (partition->expand_to_fit ? "yes" : "no"));
       }
-         MSG(" order: " << partition->order);
+      MSG(" order: " << partition->order);
    }
 
 
@@ -463,6 +473,14 @@ bool IDPparser::parseIGv2(const Json::Value& json, const IDPversion& version, st
    if (ptable.asString() == "gpt")
       image_.device_storage.ptable_type = IDPptable_type::GPT;
 
+   if (image_.device_storage.ptable_type == IDPptable_type::GPT) {
+      const Json::Value& id = json["layout"]["partitiontable"]["id"];
+      if (id.isString() && !id.asString().empty())
+         image_.device_storage.ptable_id = id.asString();
+      else
+         image_.device_storage.ptable_id.reset();
+   }
+
    if (!checkPMAPCompat(json, str, error)) {
       ERR("PMAP compat check failed: " << error);
       return false;
@@ -539,6 +557,14 @@ bool IDPparser::parseIGv2(const Json::Value& json, const IDPversion& version, st
             err = "No partition code found for " + partition->image;
             return false;
          }
+
+         // Optional
+         if (img.isMember("partition-label")) {
+            JCHK(img, "partition-label", partition->plabel, error);
+         }
+         if (img.isMember("partition-uuid")) {
+            JCHK(img, "partition-uuid", partition->puuid, error);
+         }
       }
 
       // Establishing MBR extended partitions from the genimage config
@@ -569,9 +595,14 @@ bool IDPparser::parseIGv2(const Json::Value& json, const IDPversion& version, st
          p.simg = partition->simg_name;
          p.size = partition->img_size;
          p.aligned_size = image_.device_storage.alignUp(partition->img_size);
-         p.pcode = partition->pcode;
+         p.typecode = partition->pcode;
+         if (partition->plabel)
+            p.gptlabel = partition->plabel;
+         if (partition->puuid)
+            p.gptuuid = partition->puuid;
       }
       p.index = partitions_.size();
+      p.expand_to_fit = partition->expand_to_fit;
 
       // Set parent_index
       if (partition->parent) {
@@ -656,7 +687,7 @@ bool IDPparser::walkTree()
             std::string code =
                image_.device_storage.ptable_type == IDPptable_type::DOS ?
                "0x83" : "0fc63daf-8483-4772-8e79-3d69d8477de4"; // linux
-            part.pcode = code;
+            part.typecode = code;
          }
 
          unsigned int child_num = 1;
