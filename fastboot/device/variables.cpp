@@ -1013,10 +1013,10 @@ bool GetSignedOtp(FastbootDevice* /* device */, const std::vector<std::string>& 
 bool GetSecure(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
                std::string* message) {
     pid_t pid;
-    char *arg[] = {"/usr/local/bin/rpi-otp-private-key", "-c", NULL};
+    char *arg[] = {"/usr/bin/rpi-otp-private-key", "-c", NULL};
     int ret;
     int wstatus;
-    ret = posix_spawnp(&pid, "/usr/local/bin/rpi-otp-private-key", NULL, NULL, arg, NULL);
+    ret = posix_spawnp(&pid, "/usr/bin/rpi-otp-private-key", NULL, NULL, arg, NULL);
 
     if (ret) {
         *message = strerror(ret);
