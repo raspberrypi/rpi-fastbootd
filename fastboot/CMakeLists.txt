@@ -28,7 +28,10 @@ pkg_check_modules(SYSTEMD REQUIRED libsystemd)
 pkg_check_modules(GPIOD libgpiod)
 
 # Crypto operations via libcryptsetup (optional - falls back to command if not available)
-pkg_check_modules(CRYPTSETUP libcryptsetup)
+option(SKIP_CRYPTSETUP "Skip libcryptsetup for Apache 2.0 licensing" OFF)
+if(NOT SKIP_CRYPTSETUP)
+    pkg_check_modules(CRYPTSETUP libcryptsetup)
+endif()
 
 find_package(ZLIB REQUIRED)
 
@@ -58,12 +61,20 @@ else()
 endif()
 
 # Define HAVE_LIBCRYPTSETUP if libcryptsetup is available
-if(CRYPTSETUP_FOUND)
-    message(STATUS "libcryptsetup found - enabling native LUKS operations")
+if(SKIP_CRYPTSETUP)
+    message(STATUS "libcryptsetup SKIPPED - using cryptsetup command fallback (Apache 2.0 license)")
+    set(FASTBOOTD_LICENSE "Apache-2.0")
+elseif(CRYPTSETUP_FOUND)
+    message(STATUS "libcryptsetup found - enabling native LUKS operations (GPLv2+/GPLv3 license)")
     target_compile_definitions(fastbootd PRIVATE HAVE_LIBCRYPTSETUP)
+    set(FASTBOOTD_LICENSE "GPL-2+")
 else()
-    message(STATUS "libcryptsetup not found - will use cryptsetup command fallback")
+    message(STATUS "libcryptsetup not found - will use cryptsetup command fallback (Apache 2.0 license)")
+    set(FASTBOOTD_LICENSE "Apache-2.0")
 endif()
+
+# Write license information to a file
+file(WRITE "${CMAKE_BINARY_DIR}/LICENSE_INFO" "${FASTBOOTD_LICENSE}\n")
 
 target_compile_definitions(fastbootd PRIVATE ${COMMON_CPPFLAGS})
 target_compile_options(fastbootd PRIVATE
@@ -118,13 +129,18 @@ install(DIRECTORY systemd/modules-load.d
 	DESTINATION /usr/lib
 )
 
-install(DIRECTORY systemd/bin
-	DESTINATION /usr/local/
-	PATTERN "*"
-	PERMISSIONS
-		OWNER_READ OWNER_WRITE OWNER_EXECUTE
-		GROUP_READ GROUP_EXECUTE
-		WORLD_READ WORLD_EXECUTE
+# Install user-facing utilities to /usr/bin
+install(PROGRAMS systemd/bin/rpi-otp-private-key
+	DESTINATION /usr/bin
+)
+
+# Install internal systemd helper scripts to /usr/lib/rpi-fastbootd/bin
+install(PROGRAMS 
+	systemd/bin/generate_keys
+	systemd/bin/run_fastboot
+	systemd/bin/fastboot_udc_attach
+	systemd/bin/initialise_configfs
+	DESTINATION /usr/lib/rpi-fastbootd/bin
 )
 
 # Add test subdirectory

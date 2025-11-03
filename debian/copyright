@@ -1,0 +1,46 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: rpi-fastbootd
+Upstream-Contact: Raspberry Pi Signed Boot Team <applications@raspberrypi.com>
+Source: https://github.com/raspberrypi/android_platform_system_core
+
+Files: *
+Copyright: 2018-2025 The Android Open Source Project
+           2025 Raspberry Pi Ltd
+License: Apache-2.0
+
+Files: debian/*
+Copyright: 2025 Raspberry Pi Ltd
+License: Apache-2.0
+
+License: Apache-2.0
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
+ .
+     http://www.apache.org/licenses/LICENSE-2.0
+ .
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+ .
+ On Debian systems, the complete text of the Apache License,
+ Version 2.0 can be found in `/usr/share/common-licenses/Apache-2.0'.
+
+Comment:
+ This package's license depends on build-time options:
+ .
+ DEFAULT BUILD (with libcryptsetup and libgpiod):
+   License: GPL-2+ (or GPL-3+ depending on libcryptsetup version)
+   Reason: Dynamic linking with libcryptsetup12 (GPL-2+) and libgpiod (GPL-2+)
+ .
+ APACHE-ONLY BUILD (without libcryptsetup):
+   License: Apache-2.0
+   Build with: DEB_BUILD_OPTIONS="nocryptsetup" dpkg-buildpackage
+   Note: Uses command-line fallbacks for cryptsetup operations
+ .
+ The source code itself is Apache-2.0 licensed, but the compiled binary's
+ effective license is determined by linked libraries at build time.
+
+

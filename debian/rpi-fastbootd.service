@@ -9,9 +9,11 @@ Before=fastboot-udc-attach.service
 [Service]
 Type=notify
 NotifyAccess=all
-ExecStartPre=/usr/lib/rpi-fastbootd/bin/generate_keys
-ExecStart=/usr/lib/rpi-fastbootd/bin/run_fastboot
+ExecStartPre=/usr/local/bin/generate_keys
+ExecStart=/usr/local/bin/run_fastboot
 Restart=no
 
 [Install]
 WantedBy=multi-user.target
+
+

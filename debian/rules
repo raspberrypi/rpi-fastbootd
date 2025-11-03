@@ -1,0 +1,63 @@
+#!/usr/bin/make -f
+
+# Get git-based revision number for version
+# Format: 14.0.0-<git-commit-count>
+BASELINE_COMMIT := 2bdf18c51
+GIT_REVISION := $(shell git rev-list --count $(BASELINE_COMMIT)^..HEAD 2>/dev/null || echo "0")
+export DEB_VERSION := 14.0.0-$(GIT_REVISION)
+
+# Preserve cmake-based build system
+export DH_VERBOSE = 1
+
+# Allow network access for CMake FetchContent fallback
+# (Only used if system jsoncpp is not available)
+export DEB_BUILD_OPTIONS += network
+
+# Generate changelog before any build steps
+.PHONY: generate-changelog
+generate-changelog:
+	@echo "Generating debian/changelog with version $(DEB_VERSION)"
+	@debian/gen-version.sh
+
+%:
+	$(MAKE) -f debian/rules generate-changelog
+	dh $@ --buildsystem=cmake
+
+override_dh_auto_configure:
+	# Check if building without cryptsetup (for Apache 2.0 license)
+	if echo "$$DEB_BUILD_OPTIONS" | grep -q "nocryptsetup"; then \
+		echo "Building WITHOUT libcryptsetup (Apache 2.0 license)"; \
+		dh_auto_configure -- \
+			-DCMAKE_BUILD_TYPE=Release \
+			-DBUILD_TESTING=OFF \
+			-DFETCHCONTENT_FULLY_DISCONNECTED=OFF \
+			-DSKIP_CRYPTSETUP=ON; \
+	else \
+		echo "Building WITH libcryptsetup (GPLv2+/GPLv3 license)"; \
+		dh_auto_configure -- \
+			-DCMAKE_BUILD_TYPE=Release \
+			-DBUILD_TESTING=OFF \
+			-DFETCHCONTENT_FULLY_DISCONNECTED=OFF; \
+	fi
+
+override_dh_auto_install:
+	dh_auto_install
+	# CMake install target handles all installation
+
+override_dh_install:
+	dh_install
+
+override_dh_installsystemd:
+	# Install systemd service files with proper dependencies
+	dh_installsystemd --name=fastbootd --no-start --no-enable
+	dh_installsystemd --name=configfs-init --no-start --no-enable
+	dh_installsystemd --name=fastboot-udc-attach --no-start --no-enable
+
+# Don't strip debug symbols by default (useful for debugging)
+override_dh_strip:
+	dh_strip --dbgsym-migration='rpi-fastbootd-dbg (<< 14.0.0~)'
+
+# Generate shlibs dependencies automatically
+override_dh_shlibdeps:
+	dh_shlibdeps -l/usr/lib/aarch64-linux-gnu/android --dpkg-shlibdeps-params=--ignore-missing-info
+

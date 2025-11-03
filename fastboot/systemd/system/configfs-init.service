@@ -7,5 +7,5 @@ After=sys-kernel-config.mount
 Type=oneshot
 User=root
 WorkingDirectory=/sys/kernel/config/usb_gadget
-ExecStart=/usr/local/bin/initialise_configfs
+ExecStart=/usr/lib/rpi-fastbootd/bin/initialise_configfs
 Restart=no

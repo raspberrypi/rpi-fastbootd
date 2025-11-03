@@ -3,7 +3,8 @@ Raspberry Pi Fastbootd Repository Structure
 
 Root Directory:
 ├── README.md               Main documentation (Raspberry Pi Fastbootd)
-├── LICENSE                 Apache 2.0 License
+├── LICENSE                 Apache 2.0 License (source code)
+├── BUILDING_LICENSING.md   Build options and binary licensing guide
 ├── CMakeLists.txt          Top-level build configuration
 ├── REPO_STRUCTURE.txt      This file
 ├── cmake/
@@ -16,12 +17,6 @@ Root Directory:
 │   │   ├── crypto_native.cpp  Native LUKS/dm-verity operations
 │   │   ├── main.cpp        Daemon entry point
 │   │   └── test/           Catch2 v3.11.0 test suite
-│   ├── examples/           IDP JSON configuration examples
-│   │   ├── README.md       Complete IDP guide
-│   │   ├── ab_system_verity_luks.json
-│   │   ├── simple_verified_system.json
-│   │   ├── android_style_complete.json
-│   │   └── separate_hash_example.json
 │   └── systemd/            Systemd service files
 │       ├── system/         Service definitions
 │       └── bin/            Helper scripts
@@ -41,7 +36,6 @@ Root Level:
 Fastboot Directory:
 - PROTOCOL.md               Original AOSP fastboot protocol specification
 - VERITY_MODES_COMPARISON.md Comparison of separate vs appended hash trees
-- examples/README.md        IDP JSON schema, examples, and workflow guide
 
 Build Outputs:
 ==============
