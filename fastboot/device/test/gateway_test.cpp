@@ -390,5 +390,3 @@ TEST_CASE("Hex to IP Conversion", "[gateway][conversion]") {
         REQUIRE(ipv6.find("fe80") == 0);  // Link-local prefix
     }
 }
-
-

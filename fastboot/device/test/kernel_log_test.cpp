@@ -376,5 +376,3 @@ TEST_CASE("Kernel Log Performance Benchmark", "[.][kernel_log][benchmark]") {
         REQUIRE(avg_ms < 5.0);  // Average should be under 5ms
     }
 }
-
-
