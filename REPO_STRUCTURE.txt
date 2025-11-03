@@ -23,7 +23,7 @@ Root Directory:
 ├── libsparse/              Sparse image library
 ├── libasyncio/             Async I/O library
 ├── rpiparted/              Raspberry Pi partitioning library
-└── rpiidp/                 Interactive Device Provisioning library
+└── rpiidp/                 Image Description Provisioning library
 
 Key Documentation Files:
 ========================
@@ -76,7 +76,7 @@ Generated .deb package includes:
 
 Key Features:
 =============
-✅ Interactive Device Provisioning (IDP) - JSON-driven partition setup
+✅ Image Description Provisioning (IDP) - JSON-driven partition setup
 ✅ LUKS2 Encryption - Native libcryptsetup integration
 ✅ dm-verity - Read-only integrity verification (separate & appended modes)
 ✅ GPIO Control - Native libgpiod support

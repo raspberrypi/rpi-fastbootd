@@ -2,6 +2,3 @@
 # With libcryptsetup: GPL-2+/GPL-3+ (due to libcryptsetup linkage)
 # Without libcryptsetup: Apache-2.0
 rpi-fastbootd: possible-gpl-code-linked-with-openssl
-
-
-

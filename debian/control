@@ -38,7 +38,8 @@ Depends: ${shlibs:Depends}, ${misc:Depends},
          xxd,
          sed,
          awk,
-         raspi-utils-core
+         raspi-utils-core,
+         kpartx
 Suggests: net-tools,
           iproute2,
           util-linux,
@@ -49,7 +50,7 @@ Description: Raspberry Pi Fastboot Device Daemon
  Raspberry Pi secure boot and device provisioning workflows.
  .
  Key features include:
-  * Interactive Device Provisioning (IDP) - JSON-driven partition setup
+  * Image Description Provisioning (IDP) - JSON-driven partition setup
   * LUKS2 encryption via native libcryptsetup integration
   * dm-verity support for read-only partition integrity verification
   * GPIO control via native libgpiod
