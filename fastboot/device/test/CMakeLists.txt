@@ -11,7 +11,7 @@ include(FetchContent)
 FetchContent_Declare(
     Catch2
     GIT_REPOSITORY https://github.com/catchorg/Catch2.git
-    GIT_TAG        v2.13.10  # Use stable v2 branch (v3 requires C++14)
+    GIT_TAG        v3.11.0  # Latest stable v3 release (requires C++14)
 )
 
 FetchContent_MakeAvailable(Catch2)
@@ -19,11 +19,11 @@ FetchContent_MakeAvailable(Catch2)
 # Kernel log (klogctl) tests
 add_executable(kernel_log_test kernel_log_test.cpp)
 
-# Link against Catch2
-target_link_libraries(kernel_log_test PRIVATE Catch2::Catch2)
+# Link against Catch2 (v3 uses Catch2WithMain for automatic main)
+target_link_libraries(kernel_log_test PRIVATE Catch2::Catch2WithMain)
 
-# Set C++ standard
-target_compile_features(kernel_log_test PRIVATE cxx_std_11)
+# Set C++ standard (Catch2 v3 requires C++14)
+target_compile_features(kernel_log_test PRIVATE cxx_std_14)
 
 # Include directories (if needed for headers)
 target_include_directories(kernel_log_test PRIVATE
@@ -34,34 +34,37 @@ target_include_directories(kernel_log_test PRIVATE
 add_executable(gpio_test gpio_test.cpp)
 
 # Link against Catch2
-target_link_libraries(gpio_test PRIVATE Catch2::Catch2)
+target_link_libraries(gpio_test PRIVATE Catch2::Catch2WithMain)
+
+# Set C++ standard
+target_compile_features(gpio_test PRIVATE cxx_std_14)
 
 # Gateway (/proc) parsing tests  
 add_executable(gateway_test gateway_test.cpp)
 
 # Link against Catch2
-target_link_libraries(gateway_test PRIVATE Catch2::Catch2)
+target_link_libraries(gateway_test PRIVATE Catch2::Catch2WithMain)
 
 # Set C++ standard
-target_compile_features(gateway_test PRIVATE cxx_std_11)
+target_compile_features(gateway_test PRIVATE cxx_std_14)
 
 # Crypto (libcryptsetup) tests
 add_executable(crypto_test crypto_test.cpp ../crypto_native.cpp)
 
 # Link against Catch2
-target_link_libraries(crypto_test PRIVATE Catch2::Catch2)
+target_link_libraries(crypto_test PRIVATE Catch2::Catch2WithMain)
 
 # Set C++ standard
-target_compile_features(crypto_test PRIVATE cxx_std_11)
+target_compile_features(crypto_test PRIVATE cxx_std_14)
 
 # Verity (dm-verity via libcryptsetup) tests
 add_executable(verity_test verity_test.cpp ../crypto_native.cpp)
 
 # Link against Catch2
-target_link_libraries(verity_test PRIVATE Catch2::Catch2)
+target_link_libraries(verity_test PRIVATE Catch2::Catch2WithMain)
 
 # Set C++ standard
-target_compile_features(verity_test PRIVATE cxx_std_11)
+target_compile_features(verity_test PRIVATE cxx_std_14)
 
 # Link libgpiod if available
 if(GPIOD_FOUND)

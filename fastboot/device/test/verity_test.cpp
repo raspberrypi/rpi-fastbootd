@@ -1,7 +1,7 @@
 // Native dm-verity operations tests using loopback devices
 
-#define CATCH_CONFIG_MAIN
-#include <catch2/catch.hpp>
+
+#include <catch2/catch_test_macros.hpp>
 
 #include <sys/stat.h>
 #include <fcntl.h>
@@ -14,6 +14,8 @@
 #include <errno.h>
 #include <vector>
 #include <chrono>
+#include <algorithm>
+#include <numeric>
 
 #ifdef HAVE_LIBCRYPTSETUP
 #include <libcryptsetup.h>
