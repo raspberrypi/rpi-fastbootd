@@ -153,7 +153,7 @@ namespace {
     }
 }
 
-TEST_CASE("GPIO Library Availability", "[gpio][phase2b]") {
+TEST_CASE("GPIO Library Availability", "[gpio]") {
     
     SECTION("libgpiod is available") {
         INFO("libgpiod is compiled in and available for testing");
@@ -194,7 +194,7 @@ TEST_CASE("GPIO Library Availability", "[gpio][phase2b]") {
     }
 }
 
-TEST_CASE("GPIO Chip Operations", "[gpio][phase2b]") {
+TEST_CASE("GPIO Chip Operations", "[gpio]") {
     
     SECTION("Open GPIO chip by name") {
         // Try common chip names (v2.x uses /dev/ path)
@@ -232,7 +232,7 @@ TEST_CASE("GPIO Chip Operations", "[gpio][phase2b]") {
     }
 }
 
-TEST_CASE("GPIO Line Parsing", "[gpio][phase2b][parsing]") {
+TEST_CASE("GPIO Line Parsing", "[gpio][parsing]") {
     MockFastbootDevice device;
     
     SECTION("Valid line=value parsing") {
@@ -308,7 +308,7 @@ TEST_CASE("GPIO Line Parsing", "[gpio][phase2b][parsing]") {
     }
 }
 
-TEST_CASE("GPIO Line Information", "[gpio][phase2b][info]") {
+TEST_CASE("GPIO Line Information", "[gpio][info]") {
     
     SECTION("Query line information") {
         struct gpiod_chip* chip = gpiod_chip_open("/dev/gpiochip0");
@@ -334,7 +334,7 @@ TEST_CASE("GPIO Line Information", "[gpio][phase2b][info]") {
     }
 }
 
-TEST_CASE("GPIO Error Handling", "[gpio][phase2b][errors]") {
+TEST_CASE("GPIO Error Handling", "[gpio][errors]") {
     MockFastbootDevice device;
     
     SECTION("Insufficient arguments") {
@@ -356,7 +356,7 @@ TEST_CASE("GPIO Error Handling", "[gpio][phase2b][errors]") {
     }
 }
 
-TEST_CASE("GPIO Performance", "[gpio][phase2b][performance]") {
+TEST_CASE("GPIO Performance", "[gpio][performance]") {
     
     SECTION("Performance expectations") {
         INFO("Expected performance improvement:");
@@ -370,7 +370,7 @@ TEST_CASE("GPIO Performance", "[gpio][phase2b][performance]") {
     }
 }
 
-TEST_CASE("GPIO Integration", "[gpio][phase2b][integration]") {
+TEST_CASE("GPIO Integration", "[gpio][integration]") {
     
     SECTION("Complete GPIO workflow simulation") {
         MockFastbootDevice device;
@@ -393,7 +393,7 @@ TEST_CASE("GPIO Integration", "[gpio][phase2b][integration]") {
 
 #else // GPIO_TESTS_ENABLED == 0
 
-TEST_CASE("GPIO Tests Disabled", "[gpio][phase2b]") {
+TEST_CASE("GPIO Tests Disabled", "[gpio]") {
     WARN("libgpiod not available - GPIO tests are disabled");
     WARN("Install libgpiod-dev and recompile with -DHAVE_LIBGPIOD to enable tests");
     REQUIRE(GPIO_TESTS_ENABLED == 0);
@@ -401,7 +401,7 @@ TEST_CASE("GPIO Tests Disabled", "[gpio][phase2b]") {
 
 #endif // GPIO_TESTS_ENABLED
 
-TEST_CASE("GPIO Fallback Strategy", "[gpio][phase2b][fallback]") {
+TEST_CASE("GPIO Fallback Strategy", "[gpio][fallback]") {
     
     SECTION("Documentation of fallback behavior") {
         INFO("GPIO control fallback strategy:");

@@ -85,7 +85,7 @@ namespace {
     }
 }
 
-TEST_CASE("Kernel Log Native Reading", "[kernel_log][phase2a]") {
+TEST_CASE("Kernel Log Native Reading", "[kernel_log]") {
     MockFastbootDevice device;
     
     SECTION("klogctl availability") {
@@ -147,7 +147,7 @@ TEST_CASE("Kernel Log Native Reading", "[kernel_log][phase2a]") {
     }
 }
 
-TEST_CASE("Kernel Log Error Handling", "[kernel_log][phase2a][errors]") {
+TEST_CASE("Kernel Log Error Handling", "[kernel_log][errors]") {
     
     SECTION("klogctl with invalid parameters") {
         // Test with NULL buffer and invalid size
@@ -177,7 +177,7 @@ TEST_CASE("Kernel Log Error Handling", "[kernel_log][phase2a][errors]") {
     }
 }
 
-TEST_CASE("Kernel Log Performance", "[kernel_log][phase2a][performance]") {
+TEST_CASE("Kernel Log Performance", "[kernel_log][performance]") {
     MockFastbootDevice device;
     
     SECTION("Performance comparison indication") {
@@ -209,7 +209,7 @@ TEST_CASE("Kernel Log Performance", "[kernel_log][phase2a][performance]") {
     }
 }
 
-TEST_CASE("Kernel Log Output Format", "[kernel_log][phase2a][format]") {
+TEST_CASE("Kernel Log Output Format", "[kernel_log][format]") {
     MockFastbootDevice device;
     
     if (geteuid() != 0) {
@@ -251,7 +251,7 @@ TEST_CASE("Kernel Log Output Format", "[kernel_log][phase2a][format]") {
     }
 }
 
-TEST_CASE("Integration Test - End-to-End Kernel Log Reading", "[kernel_log][phase2a][integration]") {
+TEST_CASE("Integration Test - End-to-End Kernel Log Reading", "[kernel_log][integration]") {
     MockFastbootDevice device;
     
     if (geteuid() != 0) {
@@ -308,7 +308,7 @@ TEST_CASE("Integration Test - End-to-End Kernel Log Reading", "[kernel_log][phas
     }
 }
 
-TEST_CASE("Privilege Handling", "[kernel_log][phase2a][security]") {
+TEST_CASE("Privilege Handling", "[kernel_log][security]") {
     
     SECTION("Detect privilege requirements") {
         uid_t euid = geteuid();
@@ -336,7 +336,7 @@ TEST_CASE("Privilege Handling", "[kernel_log][phase2a][security]") {
 }
 
 // Benchmark test (optional, only runs with special tag)
-TEST_CASE("Kernel Log Performance Benchmark", "[.][kernel_log][phase2a][benchmark]") {
+TEST_CASE("Kernel Log Performance Benchmark", "[.][kernel_log][benchmark]") {
     // This test is hidden by default (tag starts with .)
     // Run with: --tag [benchmark]
     

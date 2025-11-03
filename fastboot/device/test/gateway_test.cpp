@@ -107,7 +107,7 @@ namespace {
     }
 }
 
-TEST_CASE("/proc Filesystem Availability", "[gateway][phase2c]") {
+TEST_CASE("/proc Filesystem Availability", "[gateway]") {
     
     SECTION("/proc/net/route exists") {
         std::ifstream route_file("/proc/net/route");
@@ -136,7 +136,7 @@ TEST_CASE("/proc Filesystem Availability", "[gateway][phase2c]") {
     }
 }
 
-TEST_CASE("IPv4 Gateway Parsing", "[gateway][phase2c][ipv4]") {
+TEST_CASE("IPv4 Gateway Parsing", "[gateway][ipv4]") {
     
     SECTION("Can read /proc/net/route") {
         std::ifstream route_file("/proc/net/route");
@@ -200,7 +200,7 @@ TEST_CASE("IPv4 Gateway Parsing", "[gateway][phase2c][ipv4]") {
     }
 }
 
-TEST_CASE("IPv6 Gateway Parsing", "[gateway][phase2c][ipv6]") {
+TEST_CASE("IPv6 Gateway Parsing", "[gateway][ipv6]") {
     
     SECTION("Can read /proc/net/ipv6_route") {
         std::ifstream route_file("/proc/net/ipv6_route");
@@ -269,7 +269,7 @@ TEST_CASE("IPv6 Gateway Parsing", "[gateway][phase2c][ipv6]") {
     }
 }
 
-TEST_CASE("Gateway Error Handling", "[gateway][phase2c][errors]") {
+TEST_CASE("Gateway Error Handling", "[gateway][errors]") {
     
     SECTION("Invalid interface name") {
         std::string gateway;
@@ -288,7 +288,7 @@ TEST_CASE("Gateway Error Handling", "[gateway][phase2c][errors]") {
     }
 }
 
-TEST_CASE("Gateway Performance", "[gateway][phase2c][performance]") {
+TEST_CASE("Gateway Performance", "[gateway][performance]") {
     
     SECTION("Performance expectations") {
         INFO("Expected performance improvement:");
@@ -320,7 +320,7 @@ TEST_CASE("Gateway Performance", "[gateway][phase2c][performance]") {
     }
 }
 
-TEST_CASE("Gateway Integration", "[gateway][phase2c][integration]") {
+TEST_CASE("Gateway Integration", "[gateway][integration]") {
     
     SECTION("Complete gateway discovery workflow") {
         std::vector<std::string> interfaces = {"eth0", "wlan0", "end0"};
@@ -349,7 +349,7 @@ TEST_CASE("Gateway Integration", "[gateway][phase2c][integration]") {
     }
 }
 
-TEST_CASE("Gateway Fallback Strategy", "[gateway][phase2c][fallback]") {
+TEST_CASE("Gateway Fallback Strategy", "[gateway][fallback]") {
     
     SECTION("Documentation of fallback behavior") {
         INFO("Gateway lookup fallback strategy:");
@@ -363,7 +363,7 @@ TEST_CASE("Gateway Fallback Strategy", "[gateway][phase2c][fallback]") {
     }
 }
 
-TEST_CASE("Hex to IP Conversion", "[gateway][phase2c][conversion]") {
+TEST_CASE("Hex to IP Conversion", "[gateway][conversion]") {
     
     SECTION("IPv4 little-endian hex conversion") {
         // Test conversion of 192.168.1.1 (C0A80101 in big-endian, 0101A8C0 in little-endian)
