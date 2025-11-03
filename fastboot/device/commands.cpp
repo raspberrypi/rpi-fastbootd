@@ -18,6 +18,7 @@
 
 #include <inttypes.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/un.h>
 
 #include <algorithm>
@@ -1129,6 +1130,136 @@ ssize_t bulk_write(int bulk_in, const char *buf, size_t length)
 
         return device->WriteOkay("gpioset completed.");
     }
+
+    // oem veritysetup <device_name>
+    // Calculates dm-verity hash for device and stores in /persistent/$device_name.verity
+    static bool oem_cmd_veritysetup(FastbootDevice* device, const std::vector<std::string>& args) {
+        if (args.size() < 3) {
+            return device->WriteFail("Usage: oem veritysetup <device_name>");
+        }
+
+        std::string device_name = args[2];
+        std::string data_device = "/dev/" + device_name;
+        
+        // Ensure /persistent directory exists
+        if (mkdir("/persistent", 0755) != 0 && errno != EEXIST) {
+            return device->WriteFail("Failed to create /persistent directory: " + std::string(strerror(errno)));
+        }
+        
+        std::string hash_file = "/persistent/" + device_name + ".verity";
+        
+        // Verify data device exists
+        PartitionHandle handle;
+        if (!OpenPartition(device, data_device, &handle, O_RDONLY)) {
+            return device->WriteFail("Cannot open device " + data_device);
+        }
+
+#ifdef HAVE_LIBCRYPTSETUP
+        // Try native libcryptsetup implementation
+        std::string root_hash;
+        std::string error_msg;
+        
+        if (VeritySetupNative(data_device, hash_file, &root_hash, &error_msg)) {
+            device->WriteInfo("Root hash: " + root_hash);
+            device->WriteInfo("Hash stored in: " + hash_file);
+            return device->WriteOkay("dm-verity setup completed");
+        }
+        
+        LOG(WARNING) << "libcryptsetup failed: " << error_msg << ", falling back to veritysetup command";
+#endif
+
+        // Fallback to veritysetup command
+        char veritysetup[] = "veritysetup";
+        char format_cmd[] = "format";
+        char root_hash_arg[] = "--root-hash-file";
+        
+        std::string root_hash_file = hash_file + ".roothash";
+        
+        char * const argv[] = {
+            veritysetup,
+            format_cmd,
+            root_hash_arg,
+            const_cast<char*>(root_hash_file.c_str()),
+            const_cast<char*>(data_device.c_str()),
+            const_cast<char*>(hash_file.c_str()),
+            NULL
+        };
+
+        int subprocess_rc = -1;
+        int ret = rpi::process_spawn_blocking(&subprocess_rc, "veritysetup", argv, NULL);
+
+        if (ret) {
+            return device->WriteFail("veritysetup spawn failed: " + std::string(strerror(ret)));
+        } else if (subprocess_rc) {
+            return device->WriteFail("veritysetup command failed");
+        }
+        
+        // Read and display the root hash
+        std::string root_hash_content;
+        if (android::base::ReadFileToString(root_hash_file, &root_hash_content)) {
+            // Trim whitespace
+            root_hash_content.erase(root_hash_content.find_last_not_of(" \n\r\t") + 1);
+            device->WriteInfo("Root hash: " + root_hash_content);
+        }
+        
+        device->WriteInfo("Hash stored in: " + hash_file);
+        return device->WriteOkay("dm-verity setup completed");
+    }
+
+    // oem verityappend <device_name> <data_size_bytes>
+    // Appends dm-verity hash tree to the end of the same device
+    static bool oem_cmd_verityappend(FastbootDevice* device, const std::vector<std::string>& args) {
+        if (args.size() < 4) {
+            return device->WriteFail("Usage: oem verityappend <device_name> <data_size_bytes>");
+        }
+
+        std::string device_name = args[2];
+        std::string data_device = "/dev/" + device_name;
+        
+        uint64_t data_size;
+        if (!android::base::ParseUint(args[3], &data_size)) {
+            return device->WriteFail("Invalid data size: " + args[3]);
+        }
+        
+        // Verify device exists
+        PartitionHandle handle;
+        if (!OpenPartition(device, data_device, &handle, O_RDWR)) {
+            return device->WriteFail("Cannot open device " + data_device);
+        }
+        
+        // Get device size
+        uint64_t device_size = android::get_block_device_size(handle.fd());
+        if (device_size == 0) {
+            return device->WriteFail("Cannot get device size");
+        }
+        
+        // Validate data size
+        if (data_size > device_size) {
+            return device->WriteFail("Data size exceeds device size");
+        }
+        
+        device->WriteInfo("Device size: " + std::to_string(device_size) + " bytes");
+        device->WriteInfo("Data size: " + std::to_string(data_size) + " bytes");
+        device->WriteInfo("Hash tree will be appended at offset: " + std::to_string(data_size));
+
+#ifdef HAVE_LIBCRYPTSETUP
+        // Try native libcryptsetup implementation
+        std::string root_hash;
+        std::string error_msg;
+        
+        if (VeritySetupAppendedNative(data_device, data_size, &root_hash, &error_msg)) {
+            device->WriteInfo("Root hash: " + root_hash);
+            device->WriteInfo("Hash tree appended to device");
+            device->WriteInfo("Data blocks: " + std::to_string(data_size / 4096));
+            return device->WriteOkay("dm-verity appended setup completed");
+        }
+        
+        LOG(WARNING) << "libcryptsetup failed: " << error_msg << ", falling back to veritysetup command";
+#endif
+
+        // Fallback to veritysetup command with same device
+        return device->WriteFail("veritysetup command fallback not yet implemented for appended mode");
+    }
 } //namespace anonymous
 
 bool OemCmdHandler(FastbootDevice* device, const std::vector<std::string>& args) {
@@ -1163,6 +1294,10 @@ bool OemCmdHandler(FastbootDevice* device, const std::vector<std::string>& args)
         return oem_cmd_upload_file(device, split_args);
     } else if (command_name == "gpioset") {
         return oem_cmd_gpioset(device, split_args);
+    } else if (command_name == "veritysetup") {
+        return oem_cmd_veritysetup(device, split_args);
+    } else if (command_name == "verityappend") {
+        return oem_cmd_verityappend(device, split_args);
     } else if (command_name == "idpinit") {
         return oem_cmd_idp_init(device, split_args);
     } else if (command_name == "idpwrite") {

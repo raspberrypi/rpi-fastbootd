@@ -54,6 +54,15 @@ target_link_libraries(crypto_test PRIVATE Catch2::Catch2)
 # Set C++ standard
 target_compile_features(crypto_test PRIVATE cxx_std_11)
 
+# Verity (dm-verity via libcryptsetup) tests
+add_executable(verity_test verity_test.cpp ../crypto_native.cpp)
+
+# Link against Catch2
+target_link_libraries(verity_test PRIVATE Catch2::Catch2)
+
+# Set C++ standard
+target_compile_features(verity_test PRIVATE cxx_std_11)
+
 # Link libgpiod if available
 if(GPIOD_FOUND)
     target_compile_definitions(gpio_test PRIVATE HAVE_LIBGPIOD)
@@ -87,6 +96,21 @@ target_include_directories(crypto_test PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/..
 )
 
+# Link libcryptsetup if available for verity tests
+if(CRYPTSETUP_FOUND)
+    target_compile_definitions(verity_test PRIVATE HAVE_LIBCRYPTSETUP)
+    target_link_libraries(verity_test PRIVATE ${CRYPTSETUP_LIBRARIES})
+    target_include_directories(verity_test PRIVATE ${CRYPTSETUP_INCLUDE_DIRS})
+    message(STATUS "Verity tests will run with libcryptsetup support")
+else()
+    message(STATUS "Verity tests will run in fallback-only mode (libcryptsetup not available)")
+endif()
+
+# Include directories for verity tests
+target_include_directories(verity_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/..
+)
+
 # Add test to CTest (try catch_discover_tests if available, else manual)
 if(EXISTS "${catch2_SOURCE_DIR}/contrib/Catch.cmake")
     list(APPEND CMAKE_MODULE_PATH ${catch2_SOURCE_DIR}/contrib)
@@ -101,6 +125,7 @@ add_test(NAME kernel_log_all_tests COMMAND kernel_log_test)
 add_test(NAME gpio_all_tests COMMAND gpio_test)
 add_test(NAME gateway_all_tests COMMAND gateway_test)
 add_test(NAME crypto_all_tests COMMAND crypto_test)
+add_test(NAME verity_all_tests COMMAND verity_test)
 
 # Add specific test suites
 add_test(NAME kernel_log_basic COMMAND kernel_log_test "[kernel_log]")
@@ -121,8 +146,12 @@ add_test(NAME gateway_performance COMMAND gateway_test "[performance]")
 add_test(NAME crypto_luks COMMAND crypto_test "[crypto][luks]")
 add_test(NAME crypto_performance COMMAND crypto_test "[crypto][performance]")
 
+add_test(NAME verity_native COMMAND verity_test "[verity][native]")
+add_test(NAME verity_activate COMMAND verity_test "[verity][activate]")
+add_test(NAME verity_integration COMMAND verity_test "[verity][integration]")
+
 # Installation (optional)
-install(TARGETS kernel_log_test gpio_test gateway_test crypto_test
+install(TARGETS kernel_log_test gpio_test gateway_test crypto_test verity_test
         RUNTIME DESTINATION tests
 )
 
@@ -132,6 +161,7 @@ message(STATUS "  - kernel_log_test: klogctl() syscall")
 message(STATUS "  - gpio_test: libgpiod library")
 message(STATUS "  - gateway_test: /proc gateway parsing")
 message(STATUS "  - crypto_test: libcryptsetup LUKS operations")
+message(STATUS "  - verity_test: dm-verity hash tree generation")
 message(STATUS "  - Run tests with: ctest --test-dir build/fastboot/device/test")
 message(STATUS "  - Or directly: build/fastboot/device/test/<test_name>")
 message(STATUS "  - For verbose output: <test> -s")
@@ -142,5 +172,6 @@ message(STATUS "      - kernel_log_test needs root for klogctl() access")
 message(STATUS "      - gpio_test needs GPIO hardware access")
 message(STATUS "      - gateway_test needs network configuration")
 message(STATUS "      - crypto_test needs root for loopback devices")
+message(STATUS "      - verity_test needs root for loopback devices")
 message(STATUS "      Run as root for full test coverage: sudo ctest")
 
