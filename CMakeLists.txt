@@ -12,7 +12,3 @@ add_subdirectory(rpiidp)
 # Enable CTest for testing support
 include(CTest)
 enable_testing()
-
-# CPack directives
-set(CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/cmake")
-include(Packaging)

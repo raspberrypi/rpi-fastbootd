@@ -10,5 +10,4 @@ debhelper-build-stamp
 
 # Changelog is generated
 # (but we keep a placeholder in git)
-
-
+debian/changelog

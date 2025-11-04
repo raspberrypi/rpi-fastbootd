@@ -268,21 +268,21 @@ With libcryptsetup    → GPLv3 ⚠️
 
 ---
 
-## CPack / Packaging
+## Building Debian Packages
 
-This project uses CPack to generate `.deb` packages for easy deployment.
+This project uses Debian devscripts (`dpkg-buildpackage`) to generate `.deb` packages.
 
 ### Creating Packages
 
 ```bash
-# Build and package
-cmake -B build -S .
-cmake --build build
-cd build
-cpack
+# Standard build (includes libcryptsetup - GPL-2+/GPL-3+)
+./build-package.sh
+
+# Apache-only build (no libcryptsetup)
+DEB_BUILD_OPTIONS="nocryptsetup" ./build-package.sh
 ```
 
-**Output:** `dist/rpi-fastbootd_14.0.0-<revision>_arm64.deb`
+**Output:** `../rpi-fastbootd_14.0.0-<revision>_arm64.deb`
 
 ### Package Naming Convention
 
@@ -291,22 +291,31 @@ rpi-fastbootd_<VERSION>-<REVISION>_<ARCH>.deb
 ```
 
 Where:
-- **rpi-fastbootd** - Package name prefix (from `CPACK_PACKAGE_NAME`)
-- **VERSION** - `14.0.0` (from `PROJECT_VERSION` in CMakeLists.txt)
-- **REVISION** - Git commit count since Android 14 baseline (auto-calculated)
-- **ARCH** - `arm64` (from `CPACK_DEBIAN_PACKAGE_ARCHITECTURE`)
+- **rpi-fastbootd** - Package name (from `debian/control`)
+- **VERSION** - `14.0.0` (Android 14 base version)
+- **REVISION** - Git commit count since Android 14 baseline (auto-calculated by `debian/gen-version.sh`)
+- **ARCH** - `arm64` (target architecture)
 
-**Example:** `rpi-fastbootd_14.0.0-247_arm64.deb`
+**Example:** `rpi-fastbootd_14.0.0-85_arm64.deb`
+
+### Build Options
+
+| Option | Effect | License | Use Case |
+|--------|--------|---------|----------|
+| Default | Links libcryptsetup, libgpiod | GPL-2+ or GPL-3+ | Full functionality with native crypto |
+| `DEB_BUILD_OPTIONS="nocryptsetup"` | Uses command fallbacks | Apache 2.0 | Apache-compatible distribution |
+
+**See:** [BUILDING_LICENSING.md](BUILDING_LICENSING.md) for detailed licensing information
 
 ### Customizing Package Metadata
 
-Edit `cmake/Packaging.cmake`:
+Edit `debian/control`:
 
-```cmake
-set(CPACK_PACKAGE_NAME "rpi-${PROJECT_NAME}")
-set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Raspberry Pi Fastbootd")
-set(CPACK_PACKAGE_VENDOR "Raspberry Pi Ltd")
-set(CPACK_DEBIAN_PACKAGE_MAINTAINER "Raspberry Pi Signed Boot Team")
+```
+Source: rpi-fastbootd
+Maintainer: Raspberry Pi Signed Boot Team <applications@raspberrypi.com>
+Section: admin
+Priority: optional
 ```
 
 ### Installation
