@@ -8,5 +8,4 @@ rpi-fastbootd/
 files
 debhelper-build-stamp
 
-# Changelog is generated
-# (but we keep a placeholder in git)
+LICENSE_BUILD_INFO
