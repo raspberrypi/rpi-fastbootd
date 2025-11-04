@@ -1,7 +1,0 @@
-rpi-fastbootd (14.0.0-85) bookworm; urgency=medium
-
-  * Automated build from git revision 85
-  * Based on Android 14 AOSP fastboot
-  * See git log for detailed changes
-
- -- Raspberry Pi Signed Boot Team <applications@raspberrypi.com>  Mon, 03 Nov 2025 14:45:34 +0000
