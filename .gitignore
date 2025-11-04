@@ -9,4 +9,7 @@ debian/.debhelper
 debian/rpi-fastbootd
 debian/files
 debian/debhelper-build-stamp
+debian/changelog
 obj-aarch64-linux-gnu
+
+LICENSE_BUILD_INFO

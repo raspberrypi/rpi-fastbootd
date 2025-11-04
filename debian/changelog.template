@@ -1,0 +1,13 @@
+rpi-fastbootd (14.0.0-0) unstable; urgency=medium
+
+  * Initial Raspberry Pi fastbootd package
+  * Based on Android 14 AOSP fastboot (commit 2bdf18c51)
+  * Added Raspberry Pi-specific functionality:
+    - Image Description Provisioning (IDP)
+    - LUKS2 encryption support
+    - dm-verity integrity verification
+    - GPIO control
+    - Raspberry Pi OTP integration
+
+ -- Raspberry Pi Signed Boot Team <applications@raspberrypi.com>  Mon, 01 Jan 2024 00:00:00 +0000
+
