@@ -1,0 +1,86 @@
+rpi-fastbootd for Debian
+-------------------------
+
+This package provides the fastboot device daemon (fastbootd) for Raspberry Pi.
+
+IMPORTANT: This builds only the device-side daemon. You need the fastboot
+client on your host computer:
+
+  Debian/Ubuntu: sudo apt-get install fastboot
+  macOS:         brew install android-platform-tools
+  Windows:       Download Android SDK Platform Tools
+
+Connection Modes:
+-----------------
+
+USB Mode (Default):
+  sudo systemctl start fastbootd.service
+  (On host) fastboot devices
+
+TCP/IP Mode (Port 5554):
+  sudo systemctl edit fastbootd.service
+  Add: Environment="FASTBOOT_MODE=tcp"
+  (On host) fastboot -s tcp:IP:5554 devices
+
+Licensing:
+----------
+
+Default build (with libcryptsetup): GPLv3
+  The libcryptsetup12 library is GPLv3, which affects the entire binary.
+
+To build without libcryptsetup (Apache 2.0 only):
+  DEB_BUILD_OPTIONS="nocryptsetup" dpkg-buildpackage -b -uc -us
+  
+  This will use cryptsetup command-line tool as fallback instead of
+  native library calls. Slight performance impact (~10-15% overhead)
+  but maintains Apache 2.0 licensing.
+
+Version Numbering:
+------------------
+
+Package versions follow: 14.0.0-<git-commit-count>
+
+Where:
+  14.0.0         = Android 14 baseline version
+  commit-count   = Number of commits since baseline (auto-calculated)
+
+Example: rpi-fastbootd_14.0.0-247_arm64.deb
+
+Building from Source:
+---------------------
+
+The build uses CMake FetchContent to download and build jsoncpp statically
+in-tree. This ensures consistent versions and eliminates runtime dependencies.
+
+Network access is enabled in debian/rules via DEB_BUILD_OPTIONS += network
+to download jsoncpp (v1.9.6) during build.
+
+Standard build:
+  dpkg-buildpackage -b -uc -us
+
+Or use the helper script:
+  ./build-package.sh
+
+Offline build (requires libjsoncpp-dev):
+  cmake -DUSE_SYSTEM_JSONCPP=ON ...
+
+Configuration:
+--------------
+
+Persistent storage: /persistent/
+  - Encryption keys
+  - dm-verity hashes
+  - IDP metadata
+  - Device configuration
+
+Ensure this directory exists and is writable:
+  sudo mkdir -p /persistent
+  sudo chown root:root /persistent
+  sudo chmod 755 /persistent
+
+For more information, see:
+  - README.md (comprehensive guide)
+  - https://www.raspberrypi.com/documentation/
+
+ -- Raspberry Pi Signed Boot Team <applications@raspberrypi.com>
+

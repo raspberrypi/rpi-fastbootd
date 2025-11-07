@@ -1,0 +1,99 @@
+Building rpi-fastbootd from Source
+===================================
+
+Quick Build:
+-----------
+
+  ./build-package.sh
+
+This will:
+  1. Calculate version from git commits
+  2. Update debian/changelog
+  3. Build the package with dpkg-buildpackage
+  4. Place .deb file in parent directory
+
+Building without libcryptsetup (Apache 2.0):
+--------------------------------------------
+
+  ./build-package.sh --no-cryptsetup
+
+Or manually:
+  DEB_BUILD_OPTIONS="nocryptsetup" dpkg-buildpackage -b -uc -us
+
+Version Calculation:
+-------------------
+
+The package version is automatically calculated:
+
+  14.0.0-<git-commit-count>
+
+Where git-commit-count is the number of commits since the Android 14
+baseline commit (2bdf18c51).
+
+This calculation happens in:
+  - debian/rules (DEB_VERSION_UPSTREAM_REVISION export)
+  - build-package.sh (changelog update)
+
+Build Dependencies:
+------------------
+
+Install all build dependencies:
+  sudo apt-get build-dep ./
+
+Or manually:
+  sudo apt-get install debhelper-compat cmake pkg-config \
+    android-liblog-dev android-libbase-dev android-libcutils-dev \
+    android-libsparse-dev libfdisk-dev liburing-dev libsystemd-dev \
+    zlib1g-dev libssl-dev libgpiod-dev libcryptsetup-dev
+
+Manual Build Process:
+--------------------
+
+1. Update changelog:
+   dch -v 14.0.0-<revision> "Your changes"
+
+2. Build package:
+   dpkg-buildpackage -b -uc -us
+
+3. Install:
+   sudo dpkg -i ../rpi-fastbootd_*.deb
+
+Build Options:
+-------------
+
+DEB_BUILD_OPTIONS supported:
+  - nocryptsetup: Build without libcryptsetup (Apache 2.0 license)
+  - nocheck: Skip running tests
+  - nostrip: Don't strip debug symbols
+
+Example:
+  DEB_BUILD_OPTIONS="nocryptsetup nostrip" dpkg-buildpackage -b -uc -us
+
+Testing the Package:
+-------------------
+
+After building:
+  1. Install: sudo dpkg -i ../rpi-fastbootd_*.deb
+  2. Check: systemctl status fastbootd.service
+  3. Verify: fastbootd --help (should fail - needs root)
+  4. Test: sudo systemctl start fastbootd.service
+  5. Connect: (from host) fastboot devices
+
+Lintian Checks:
+--------------
+
+Check package quality:
+  lintian ../rpi-fastbootd_*.deb
+
+Package Contents:
+----------------
+
+To see what's in the package:
+  dpkg-deb -c ../rpi-fastbootd_*.deb
+
+To extract:
+  dpkg-deb -x ../rpi-fastbootd_*.deb /tmp/extract/
+
+For more information:
+  - https://www.debian.org/doc/manuals/maint-guide/
+  - https://www.debian.org/doc/debian-policy/

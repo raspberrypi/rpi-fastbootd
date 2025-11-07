@@ -1,0 +1,131 @@
+Raspberry Pi Fastbootd Repository Structure
+============================================
+
+Root Directory:
+├── README.md               Main documentation (Raspberry Pi Fastbootd)
+├── LICENSE                 Apache 2.0 License (source code)
+├── BUILDING_LICENSING.md   Build options and binary licensing guide
+├── CMakeLists.txt          Top-level build configuration
+├── REPO_STRUCTURE.txt      This file
+├── cmake/
+│   └── Packaging.cmake     CPack configuration
+├── fastboot/               Fastboot device daemon
+│   ├── PROTOCOL.md         Fastboot protocol specification (AOSP)
+│   ├── VERITY_MODES_COMPARISON.md  dm-verity modes comparison
+│   ├── device/             Device-side implementation
+│   │   ├── commands.cpp    OEM command handlers
+│   │   ├── crypto_native.cpp  Native LUKS/dm-verity operations
+│   │   ├── main.cpp        Daemon entry point
+│   │   └── test/           Catch2 v3.11.0 test suite
+│   └── systemd/            Systemd service files
+│       ├── system/         Service definitions
+│       └── bin/            Helper scripts
+├── libsparse/              Sparse image library
+├── libasyncio/             Async I/O library
+├── rpiparted/              Raspberry Pi partitioning library
+└── rpiidp/                 Image Description Provisioning library
+
+Key Documentation Files:
+========================
+
+Root Level:
+- README.md                 Complete guide (building, using, commands, licensing)
+- LICENSE                   Apache 2.0 License (GPLv3 if built with libcryptsetup)
+- REPO_STRUCTURE.txt        Repository layout documentation
+
+Fastboot Directory:
+- PROTOCOL.md               Original AOSP fastboot protocol specification
+- VERITY_MODES_COMPARISON.md Comparison of separate vs appended hash trees
+
+Build Outputs:
+==============
+- build/fastboot/fastbootd          Device daemon binary (ARM64)
+- build/fastboot/device/test/*_test Test executables
+- dist/rpi-fastbootd_*.deb          Debian package (via CPack)
+
+Package Naming:
+===============
+Format: rpi-fastbootd_<VERSION>-<REVISION>_<ARCH>.deb
+Example: rpi-fastbootd_14.0.0-247_arm64.deb
+
+Where:
+- VERSION: 14.0.0 (Android 14 base)
+- REVISION: Git commit count since baseline
+- ARCH: arm64
+
+What Gets Built:
+================
+✅ fastbootd (device daemon) - Runs on Raspberry Pi
+❌ fastboot (client tool) - Use OS-provided package
+
+    Host Computer              │  Raspberry Pi
+    ─────────────────────────  │  ──────────────────────
+    fastboot (client)          │  fastbootd (daemon)
+    [OS package manager]       │  [This repository]
+    Linux/Mac/Windows          │  ARM64
+
+Package Contents:
+=================
+Generated .deb package includes:
+- /usr/bin/fastbootd                    Main daemon binary
+- /usr/local/bin/*                      Helper scripts (USB setup, key generation)
+- /etc/systemd/system/*.service         Service definitions
+- /etc/systemd/system/*.mount           USB mount units
+- /etc/modules-load.d/fastbootd.conf    Kernel modules
+- Documentation (README.md, LICENSE)    Packaged docs
+
+Key Features:
+=============
+✅ Image Description Provisioning (IDP) - JSON-driven partition setup
+✅ LUKS2 Encryption - Native libcryptsetup integration
+✅ dm-verity - Read-only integrity verification (separate & appended modes)
+✅ GPIO Control - Native libgpiod support
+✅ File Transfer - Direct upload/download to device
+✅ A/B Systems - OTA update support with verification
+✅ Catch2 v3.11.0 Tests - Comprehensive test suite
+
+OEM Commands:
+=============
+IDP:        idpinit, idpwrite, idpgetblk, idpdone
+LUKS:       cryptinit, cryptopen, cryptsetpassword
+dm-verity:  veritysetup, verityappend
+Files:      download-file, upload-file
+GPIO:       gpioset
+Partition:  partinit, partapp
+LED:        led
+
+Connection Modes:
+=================
+USB:    Default, production use (requires USB gadget)
+TCP/IP: Port 5554, development/debugging (fastbootd -i tcp)
+
+Build Requirements:
+===================
+Required:
+- android-liblog, android-libbase, android-libcutils
+- android-libsparse, libfdisk, liburing, libsystemd
+- zlib, openssl
+
+Optional (Native APIs):
+- libgpiod2 (GPIO control, fallback: gpioset command)
+- libcryptsetup12 (LUKS/verity, fallback: cryptsetup command)
+  ⚠️  Note: libcryptsetup causes GPLv3 licensing
+
+Licensing:
+==========
+Default:           Apache 2.0 (without libcryptsetup)
+With libcryptsetup: GPLv3 (due to library linkage)
+
+Build without libcryptsetup to maintain Apache 2.0 license:
+  cmake -B build -S . -DCRYPTSETUP_FOUND=OFF
+
+Testing:
+========
+Test suites (Catch2 v3.11.0):
+- kernel_log_test  - klogctl() syscall operations
+- gpio_test        - libgpiod GPIO control
+- gateway_test     - /proc/net/ parsing
+- crypto_test      - LUKS encryption (requires root)
+- verity_test      - dm-verity hash trees (requires root)
+
+Run: cd build/fastboot/device/test && sudo ./verity_test

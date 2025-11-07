@@ -9,6 +9,6 @@ add_subdirectory(fastboot)
 add_subdirectory(rpiparted)
 add_subdirectory(rpiidp)
 
-# CPack directives
-set(CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/cmake")
-include(Packaging)
+# Enable CTest for testing support
+include(CTest)
+enable_testing()

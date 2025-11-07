@@ -1,0 +1,11 @@
+# Generated files
+.debhelper/
+tmp/
+rpi-fastbootd/
+*.debhelper
+*.debhelper.log
+*.substvars
+files
+debhelper-build-stamp
+
+LICENSE_BUILD_INFO

@@ -1,0 +1,68 @@
+Source: rpi-fastbootd
+Section: utils
+Priority: optional
+Maintainer: Raspberry Pi Signed Boot Team <applications@raspberrypi.com>
+Build-Depends: debhelper-compat (= 13),
+               cmake (>= 3.15),
+               pkg-config,
+               android-liblog-dev,
+               android-libbase-dev,
+               android-libcutils-dev,
+               libfdisk-dev,
+               liburing-dev,
+               libsystemd-dev,
+               zlib1g-dev,
+               libssl-dev,
+               libgpiod-dev,
+               libcryptsetup-dev [!nocryptsetup],
+               git
+Standards-Version: 4.6.2
+Homepage: https://www.raspberrypi.com/
+Vcs-Git: https://github.com/raspberrypi/android_platform_system_core.git
+Vcs-Browser: https://github.com/raspberrypi/android_platform_system_core
+Rules-Requires-Root: no
+
+Package: rpi-fastbootd
+Architecture: arm64
+Depends: ${shlibs:Depends}, ${misc:Depends},
+         android-liblog,
+         android-libbase,
+         android-libcutils,
+         libfdisk1,
+         liburing2,
+         libsystemd0,
+         libgpiod2,
+         libcryptsetup12,
+         openssl,
+         coreutils,
+         xxd,
+         sed,
+         awk,
+         raspi-utils-core,
+         kpartx
+Suggests: net-tools,
+          iproute2,
+          util-linux,
+          gpiod,
+          cryptsetup-bin
+Description: Raspberry Pi Fastboot Device Daemon
+ Heavily modified Android 14 fastboot daemon (fastbootd) customized for
+ Raspberry Pi secure boot and device provisioning workflows.
+ .
+ Key features include:
+  * Image Description Provisioning (IDP) - JSON-driven partition setup
+  * LUKS2 encryption via native libcryptsetup integration
+  * dm-verity support for read-only partition integrity verification
+  * GPIO control via native libgpiod
+  * Direct file upload/download to device
+  * Raspberry Pi OTP integration for hardware key management
+  * A/B system support for OTA updates
+  * Comprehensive Catch2 v3.11.0 test suite
+ .
+ This package builds only the device-side daemon. The fastboot client tool
+ should be installed separately from your OS package manager.
+ .
+ LICENSE: Default build links libcryptsetup and libgpiod, resulting in
+ GPL-2+/GPL-3+ licensing. To build as Apache 2.0, use:
+ DEB_BUILD_OPTIONS="nocryptsetup" (command-line fallbacks will be used).
+

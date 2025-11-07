@@ -64,45 +64,46 @@ brew install android-platform-tools
 
 ## Integration with rpi-sb-provisioner
 
-This fastbootd implementation is designed to work with the **rpi-sb-provisioner** host tool, which provides:
+This fastbootd implementation is designed to work with the **rpi-sb-provisioner** host tool for high-level provisioning workflows.
 
-- High-level provisioning workflows
-- JSON-based device configuration
-- Automated partition layout and flashing
-- Encryption and verification setup
-- A/B system support for OTA updates
-
-### Typical Workflow
+### Typical Provisioning Workflow
 
 **Prerequisites:**
 - `fastbootd` running on the Raspberry Pi (built from this repo)
 - `fastboot` client installed on your host computer (from OS package)
 - USB or network connection between host and device
 
-**Example provisioning session:**
+**Image Description Provisioning (IDP) example:**
 
 ```bash
-# On host computer (Linux/Mac/Windows):
-# rpi-sb-provisioner wraps the fastboot client
+# 1. Upload device configuration JSON
+fastboot stage device_config.json
+fastboot oem idpinit
 
-rpi-sb-provisioner --config rpi5-secure.json --device /dev/ttyUSB0
+# 2. Create partitions from JSON
+fastboot oem idpwrite
 
-# Behind the scenes, rpi-sb-provisioner uses the fastboot client:
-fastboot stage device_config.json       # Upload JSON
-fastboot oem idpinit                     # Initialize IDP
-fastboot oem idpwrite                    # Create partitions
-fastboot flash system system.img         # Flash images
-fastboot oem verityappend system ...     # Setup dm-verity
-fastboot oem cryptinit userdata luks2    # Setup encryption
-fastboot oem idpdone                     # Finalize
+# 3. Flash images and setup verification
+fastboot flash system system.img
+fastboot oem verityappend system 2040109056
+
+fastboot flash boot boot.img
+fastboot oem verityappend boot 260046848
+
+# 4. Setup encryption on userdata
+fastboot oem cryptinit /dev/mmcblk0p3 userdata aes-xts-plain64
+
+# 5. Finalize provisioning
+fastboot oem idpdone
+
+# 6. Download verification hashes
+fastboot oem upload-file /persistent/idp_verity_hashes.json
+fastboot upload hashes.json
 ```
 
 **Where each component runs:**
-- `rpi-sb-provisioner` → Host computer
 - `fastboot` client → Host computer (communicates over USB/network)
 - `fastbootd` daemon → Raspberry Pi (receives and executes commands)
-
-**See:** [IDP_VERITY_INTEGRATION.md](IDP_VERITY_INTEGRATION.md) for full workflow details
 
 ---
 
@@ -119,7 +120,7 @@ This fastbootd adds the following OEM commands beyond standard AOSP:
 | `oem idpgetblk` | Get next partition to flash | `fastboot oem idpgetblk` |
 | `oem idpdone` | Finalize IDP and save metadata | `fastboot oem idpdone` |
 
-**See:** Documentation in this directory for JSON schema details
+**See:** IDP documentation in the fastboot directory for JSON schema details
 
 ### LUKS Encryption
 
@@ -138,7 +139,7 @@ This fastbootd adds the following OEM commands beyond standard AOSP:
 | `oem veritysetup <device>` | Calculate hash tree (separate file) | `fastboot oem veritysetup system` |
 | `oem verityappend <device> <data_size>` | Append hash tree to device | `fastboot oem verityappend system 2040109056` |
 
-**See:** [DM_VERITY_SETUP.md](DM_VERITY_SETUP.md) and [DM_VERITY_APPENDED_MODE.md](DM_VERITY_APPENDED_MODE.md)
+**Root hash:** Saved to `/persistent/<device>.verity.roothash` or output in command response
 
 ### File Transfer
 
@@ -267,21 +268,21 @@ With libcryptsetup    → GPLv3 ⚠️
 
 ---
 
-## CPack / Packaging
+## Building Debian Packages
 
-This project uses CPack to generate `.deb` packages for easy deployment.
+This project uses Debian devscripts (`dpkg-buildpackage`) to generate `.deb` packages.
 
 ### Creating Packages
 
 ```bash
-# Build and package
-cmake -B build -S .
-cmake --build build
-cd build
-cpack
+# Standard build (includes libcryptsetup - GPL-2+/GPL-3+)
+./build-package.sh
+
+# Apache-only build (no libcryptsetup)
+DEB_BUILD_OPTIONS="nocryptsetup" ./build-package.sh
 ```
 
-**Output:** `dist/rpi-fastbootd_14.0.0-<revision>_arm64.deb`
+**Output:** `../rpi-fastbootd_14.0.0-<revision>_arm64.deb`
 
 ### Package Naming Convention
 
@@ -290,22 +291,31 @@ rpi-fastbootd_<VERSION>-<REVISION>_<ARCH>.deb
 ```
 
 Where:
-- **rpi-fastbootd** - Package name prefix (from `CPACK_PACKAGE_NAME`)
-- **VERSION** - `14.0.0` (from `PROJECT_VERSION` in CMakeLists.txt)
-- **REVISION** - Git commit count since Android 14 baseline (auto-calculated)
-- **ARCH** - `arm64` (from `CPACK_DEBIAN_PACKAGE_ARCHITECTURE`)
+- **rpi-fastbootd** - Package name (from `debian/control`)
+- **VERSION** - `14.0.0` (Android 14 base version)
+- **REVISION** - Git commit count since Android 14 baseline (auto-calculated by `debian/gen-version.sh`)
+- **ARCH** - `arm64` (target architecture)
 
-**Example:** `rpi-fastbootd_14.0.0-247_arm64.deb`
+**Example:** `rpi-fastbootd_14.0.0-85_arm64.deb`
+
+### Build Options
+
+| Option | Effect | License | Use Case |
+|--------|--------|---------|----------|
+| Default | Links libcryptsetup, libgpiod | GPL-2+ or GPL-3+ | Full functionality with native crypto |
+| `DEB_BUILD_OPTIONS="nocryptsetup"` | Uses command fallbacks | Apache 2.0 | Apache-compatible distribution |
+
+**See:** [BUILDING_LICENSING.md](BUILDING_LICENSING.md) for detailed licensing information
 
 ### Customizing Package Metadata
 
-Edit `cmake/Packaging.cmake`:
+Edit `debian/control`:
 
-```cmake
-set(CPACK_PACKAGE_NAME "rpi-${PROJECT_NAME}")
-set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Raspberry Pi Fastbootd")
-set(CPACK_PACKAGE_VENDOR "Raspberry Pi Ltd")
-set(CPACK_DEBIAN_PACKAGE_MAINTAINER "Raspberry Pi Signed Boot Team")
+```
+Source: rpi-fastbootd
+Maintainer: Raspberry Pi Signed Boot Team <applications@raspberrypi.com>
+Section: admin
+Priority: optional
 ```
 
 ### Installation
@@ -354,7 +364,7 @@ sudo ./crypto_test
 ./verity_test --list-tests
 ```
 
-**See:** [device/test/README.md](device/test/README.md) for full testing documentation
+Tests include kernel log, GPIO, gateway, crypto (LUKS), and dm-verity operations.
 
 ---
 
@@ -588,9 +598,13 @@ sudo chmod 755 /persistent
 
 ## Documentation
 
-- [VERITY_MODES_COMPARISON.md](VERITY_MODES_COMPARISON.md) - dm-verity modes comparison
-- [PROTOCOL.md](PROTOCOL.md) - Fastboot protocol specification
-- [device/test/CATCH2_UPDATE.md](device/test/CATCH2_UPDATE.md) - Catch2 v3.11.0 upgrade notes
+### Protocol Documentation
+- [fastboot/PROTOCOL.md](fastboot/PROTOCOL.md) - Original AOSP fastboot protocol specification
+
+### Configuration Documentation
+- [fastboot/VERITY_MODES_COMPARISON.md](fastboot/VERITY_MODES_COMPARISON.md) - dm-verity modes comparison
+- [BUILDING_LICENSING.md](BUILDING_LICENSING.md) - Build options and licensing guide
+- [DEBIAN_PACKAGING.md](DEBIAN_PACKAGING.md) - Debian package build process
 
 ---
 
@@ -659,39 +673,42 @@ This is a Raspberry Pi Ltd project for secure boot and device provisioning.
 
 ## License
 
-### Default License (Without libcryptsetup)
+This software is based on the Android 14 fastboot implementation. The **source code** is licensed under **Apache License 2.0**.
 
-```
-Apache License 2.0
+### Binary License (Build-Dependent)
 
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
+The **compiled binary's license** depends on what libraries are linked at build time:
 
-    http://www.apache.org/licenses/LICENSE-2.0
+#### Default Build: GPL-2+ / GPL-3+
+When built with `libcryptsetup` (default):
+- **License**: GPL-2+ (or GPL-3+ depending on libcryptsetup version)
+- **Reason**: Dynamic linking with GPL-licensed libraries:
+  - `libcryptsetup12` (GPL-2+)
+  - `libgpiod` (GPL-2+)
+- **Build command**: Normal `./build-package.sh` or `dpkg-buildpackage`
 
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-```
+#### Apache-Only Build: Apache 2.0
+When built without `libcryptsetup`:
+- **License**: Apache 2.0
+- **Tradeoff**: Uses command-line fallbacks (`cryptsetup`, `gpioset`) instead of native library integration
+- **Build commands**:
+  ```bash
+  # Debian package:
+  DEB_BUILD_OPTIONS="nocryptsetup" ./build-package.sh
+  
+  # CMake directly:
+  cmake -DSKIP_CRYPTSETUP=ON ..
+  ```
 
-**Full license:** http://www.apache.org/licenses/LICENSE-2.0
+The build system automatically detects which libraries are linked and generates a `LICENSE_INFO` file indicating the effective license of the compiled binary.
 
-### With libcryptsetup
+**For detailed licensing information, build instructions, and verification steps, see [`BUILDING_LICENSING.md`](BUILDING_LICENSING.md).**
 
-When built with libcryptsetup, this binary must be licensed under **GPLv3**:
+### License Texts
 
-```
-This program is free software: you can redistribute it and/or modify it under
-the terms of the GNU General Public License as published by the Free Software
-Foundation, version 3.
-
-This program is distributed in the hope that it will be useful, but WITHOUT
-ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
-FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
-```
+- **Apache 2.0**: See [`LICENSE`](LICENSE) or http://www.apache.org/licenses/LICENSE-2.0
+- **GPL-2+**: https://www.gnu.org/licenses/old-licenses/gpl-2.0.html
+- **GPL-3+**: https://www.gnu.org/licenses/gpl-3.0.html
 
 **⚠️ Important:** Always check your build configuration to understand which license applies.
 
