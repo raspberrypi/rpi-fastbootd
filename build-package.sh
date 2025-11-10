@@ -50,14 +50,19 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Check for required tools
-echo "Checking for required tools..."
-for tool in dpkg-buildpackage debuild git; do
-    if ! command -v $tool &> /dev/null; then
-        echo "Error: $tool is required but not installed"
-        echo "Install with: sudo apt-get install devscripts debhelper"
-        exit 1
-    fi
-done
+DS_PKG="devscripts"
+echo "Checking $DS_PKG is installed..."
+if ! dpkg-query -W "$DS_PKG" | grep -qE "^$DS_PKG	.+"; then
+    echo "Error: $DS_PKG is required but not installed"
+    echo "Install with: sudo apt-get install $DS_PKG"
+    exit 1
+fi
+
+echo "Generating and installing build dependencies..."
+mk-build-deps \
+  --install \
+  --root-cmd "sudo --non-interactive" \
+  --tool "apt-get --no-install-recommends --assume-yes --quiet"
 
 # Generate version and changelog
 echo "Generating version information..."
