@@ -63,6 +63,9 @@
 #include "rpiparted.h"
 #include "idpdevice.h"
 
+// librpifwcrypto
+#include <rpifwcrypto.h>
+
 #include <iostream>
 #include <fstream>
 #include <cerrno>
@@ -206,18 +209,14 @@ static bool GetVarAll(FastbootDevice* device) {
 
 // Helper to read a file and return its contents as a string
 static std::string readSysFile(const std::string& path) {
-    std::ifstream file(path);
+    std::ifstream file(path, std::ios::in | std::ios::binary);
     if (!file.is_open()) {
         return "";
     }
-    
-    std::string content;
-    std::getline(file, content);
-    
-    // Remove any trailing whitespace/newlines
-    content.erase(content.find_last_not_of(" \n\r\t") + 1);
-    
-    return content;
+
+    std::ostringstream ss;
+    ss << file.rdbuf();
+    return ss.str();
 }
 
 // Helper to check if a path exists
@@ -317,24 +316,24 @@ static std::string generateLuksKeyFromPartition(const std::string& block_device)
     if (device_id == "ERROR_USB_NOT_SUPPORTED") {
         return "ERROR_USB_NOT_SUPPORTED";
     }
-    
-    // Write device ID to temp file
-    std::string temp_file = "/tmp/device_id.txt";
-    std::ofstream outfile(temp_file);
-    if (!outfile) {
+
+    // Use RpiFwCrypto class to calculate HMAC
+    rpi::RpiFwCrypto crypto;
+
+    // Check if key is provisioned
+    auto status = crypto.GetCachedProvisioningStatus();
+    if (!status || !*status) {
         return "";
     }
-    outfile << device_id;
-    outfile.close();
-    
-    // Use rpi-fw-crypto to calculate HMAC
-    std::string hmac_cmd = "rpi-fw-crypto hmac --in " + temp_file + " --key-id 1 --outform hex";
-    std::string hmac_result = executeCommand(hmac_cmd);
-    
-    // Clean up temp file
-    std::remove(temp_file.c_str());
-    
-    return hmac_result;
+
+    // Convert device_id string to vector
+    std::vector<uint8_t> message(device_id.begin(), device_id.end());
+    auto hmac_result = crypto.CalculateHmac(message);
+    if (!hmac_result) {
+        return "";
+    }
+
+    return *hmac_result;
 }
 
 static void PostWipeData() {
@@ -1260,6 +1259,50 @@ ssize_t bulk_write(int bulk_in, const char *buf, size_t length)
         // Fallback to veritysetup command with same device
         return device->WriteFail("veritysetup command fallback not yet implemented for appended mode");
     }
+
+    // oem fwcrypto <status|init>
+    static bool oem_cmd_fwcrypto(FastbootDevice* device, const std::vector<std::string>& args) {
+        if (args.size() < 3) {
+            return device->WriteFail("Usage: oem fwcrypto <status|init>");
+        }
+
+        std::string subcommand = args[2];
+        rpi::RpiFwCrypto crypto;
+
+        if (subcommand == "status") {
+            // Get the cached provisioning status
+            auto status = crypto.GetCachedProvisioningStatus();
+            if (!status) {
+                return device->WriteFail("Failed to get key status");
+            }
+
+            if (*status) {
+                return device->WriteOkay("Key is provisioned");
+            } else {
+                return device->WriteOkay("Key is not provisioned");
+            }
+        } else if (subcommand == "init") {
+            // Check if key is already provisioned
+            auto status = crypto.GetCachedProvisioningStatus();
+            if (!status) {
+                return device->WriteFail("Failed to get key status");
+            }
+
+            if (*status) {
+                return device->WriteFail("Key is already provisioned");
+            }
+
+            // Provision the key
+            int result = crypto.ProvisionKey();
+            if (result == 0) {
+                return device->WriteOkay("Key provisioned successfully");
+            } else {
+                return device->WriteFail("Failed to provision key");
+            }
+        } else {
+            return device->WriteFail("Unknown fwcrypto subcommand. Use 'status' or 'init'");
+        }
+    }
 } //namespace anonymous
 
 bool OemCmdHandler(FastbootDevice* device, const std::vector<std::string>& args) {
@@ -1306,6 +1349,8 @@ bool OemCmdHandler(FastbootDevice* device, const std::vector<std::string>& args)
         return oem_cmd_idp_getblk(device, split_args);
     } else if (command_name == "idpdone") {
         return oem_cmd_idp_done(device, split_args);
+    } else if (command_name == "fwcrypto") {
+        return oem_cmd_fwcrypto(device, split_args);
     }
 
     return device->WriteFail("Unknown OEM command.");
