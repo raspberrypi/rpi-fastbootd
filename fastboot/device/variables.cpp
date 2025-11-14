@@ -49,6 +49,8 @@
 #include "spawn.h"
 #include "wait.h"
 
+#include <rpifwcrypto.h>
+
 #ifdef FB_ENABLE_FETCH
 static constexpr bool kEnableFetch = true;
 #else
@@ -1545,35 +1547,42 @@ bool GetDmesg(FastbootDevice* device) {
 
 bool GetPubkey(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
                      std::string* message) {
-    std::string temporary = {};
-    if (android::base::ReadFileToString("/data/key.pub", &temporary)) {
-        message->assign(temporary);
-        return true;
-    } else {
+    rpi::RpiFwCrypto crypto;
+
+    auto pubkey_result = crypto.GetPublicKey();
+    if (!pubkey_result) {
         *message = "Could not read public key";
         return false;
     }
+
+    *message = *pubkey_result;
+    return true;
 }
 
 bool GetPrivkey(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
     std::string* message) {
-    // Need to check if key is already set
-    std::string privkey_already_set = {};
-    android::base::ReadFileToString("/data/privkey-already-set", &privkey_already_set);
-    if (privkey_already_set.find("yes") != std::string::npos)
-    {
-        *message = "refused";
-    } else if (privkey_already_set.find("no") != std::string::npos)
-    {
-        std::string key;
-        if (android::base::ReadFileToString("/data/private.key", &key)) {
-            *message = key;
-        } else {
-            *message = "error";
-        }
-    } else {
+    rpi::RpiFwCrypto crypto;
+
+    // Check if key is provisioned using cached status
+    auto status = crypto.GetCachedProvisioningStatus();
+    if (!status) {
         *message = "error";
+        return true;
     }
+
+    if (*status) {
+        // Key is already provisioned, refuse to return it for security
+        *message = "refused";
+    } else {
+        // Key is not provisioned, try to get it (though this might fail)
+        auto privkey_result = crypto.GetPrivateKey();
+        if (!privkey_result) {
+            *message = "error";
+        } else {
+            *message = *privkey_result;
+        }
+    }
+
     return true;
 }
 

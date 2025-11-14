@@ -17,12 +17,16 @@
 
 #include <optional>
 #include <string>
+#include <expected>
+#include <vector>
+#include <mutex>
 
 #include <spawn.h> // for posix_spawnactions
 
 #include <android-base/file.h>
 #include <android-base/logging.h>
 #include <android-base/unique_fd.h>
+#include <rpifwcrypto.h>
 // #include <fstab/fstab.h>
 // #include <liblp/liblp.h>
 
@@ -140,4 +144,27 @@ namespace android {
 
 namespace rpi {
     int process_spawn_blocking(int *r, std::string bin, char * const argv[], char * const envp[], posix_spawn_file_actions_t *file_actions = NULL);
+
+    /**
+     * Wrapper class for Raspberry Pi firmware crypto operations
+     */
+    class RpiFwCrypto {
+    private:
+        static std::expected<bool, RPI_FW_CRYPTO_STATUS> key_provisioned_status_;
+        static std::once_flag init_flag_;
+
+        std::expected<std::string, int> ConvertDerToPem(const std::vector<uint8_t>& der_data, bool is_private_key);
+        static std::expected<bool, RPI_FW_CRYPTO_STATUS> IsKeyProvisioned();
+
+    public:
+        RpiFwCrypto();
+        ~RpiFwCrypto() = default;
+
+        std::expected<std::string, RPI_FW_CRYPTO_STATUS> GetPublicKey();
+        std::expected<std::string, RPI_FW_CRYPTO_STATUS> GetPrivateKey();
+        static std::expected<bool, RPI_FW_CRYPTO_STATUS> GetCachedProvisioningStatus();
+        int ProvisionKey();
+        std::expected<std::string, RPI_FW_CRYPTO_STATUS> CalculateHmac(const std::vector<uint8_t>& message);
+        std::string GetKeyStatusString();
+    };
 } // namespace rpi
