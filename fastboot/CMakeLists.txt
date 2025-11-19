@@ -23,6 +23,7 @@ find_package(PkgConfig REQUIRED)
 pkg_check_modules(FDISK REQUIRED fdisk)
 pkg_check_modules(URING REQUIRED liburing)
 pkg_check_modules(SYSTEMD REQUIRED libsystemd)
+find_package(rpifwcrypto REQUIRED)
 
 # GPIO control via libgpiod (optional - falls back to command if not available)
 pkg_check_modules(GPIOD libgpiod)
@@ -34,6 +35,7 @@ if(NOT SKIP_CRYPTSETUP)
 endif()
 
 find_package(ZLIB REQUIRED)
+find_package(OpenSSL REQUIRED)
 
 include(CheckIncludeFileCXX)
 
@@ -51,6 +53,10 @@ check_header_fatal(android-base/logging.h android-libbase-dev)
 check_header_fatal(cutils/sockets.h android-libcutils-dev)
 
 add_executable(fastbootd ${SOURCES})
+
+# Set C++23 standard for std::expected support
+set_property(TARGET fastbootd PROPERTY CXX_STANDARD 23)
+set_property(TARGET fastbootd PROPERTY CXX_STANDARD_REQUIRED ON)
 
 # Define HAVE_LIBGPIOD if libgpiod is available
 if(GPIOD_FOUND)
@@ -94,6 +100,7 @@ target_include_directories(fastbootd PRIVATE
     ${SYSTEMD_INCLUDE_DIRS}
     ${GPIOD_INCLUDE_DIRS}
     ${CRYPTSETUP_INCLUDE_DIRS}
+    ${RPIFWCRYPTO_INCLUDE_DIRS}
     ${CMAKE_CURRENT_LIST_DIR}/../rpiparted/include
 )
 
@@ -106,6 +113,8 @@ target_link_libraries(fastbootd PRIVATE
     ${SYSTEMD_LIBRARIES}
     ${GPIOD_LIBRARIES}
     ${CRYPTSETUP_LIBRARIES}
+    ${RPIFWCRYPTO_LIBRARIES}
+    OpenSSL::Crypto
     asyncio
     cutils
     log
@@ -129,14 +138,8 @@ install(DIRECTORY systemd/modules-load.d
 	DESTINATION /usr/lib
 )
 
-# Install user-facing utilities to /usr/bin
-install(PROGRAMS systemd/bin/rpi-otp-private-key
-	DESTINATION /usr/bin
-)
-
 # Install internal systemd helper scripts to /usr/lib/rpi-fastbootd/bin
 install(PROGRAMS 
-	systemd/bin/generate_keys
 	systemd/bin/run_fastboot
 	systemd/bin/fastboot_udc_attach
 	systemd/bin/initialise_configfs

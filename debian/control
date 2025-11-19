@@ -15,6 +15,7 @@ Build-Depends: debhelper-compat (= 13),
                libssl-dev,
                libgpiod-dev,
                libcryptsetup-dev [!nocryptsetup],
+               librpifwcrypto-dev,
                git
 Standards-Version: 4.6.2
 Homepage: https://www.raspberrypi.com/
@@ -31,7 +32,7 @@ Depends: ${shlibs:Depends}, ${misc:Depends},
          libfdisk1,
          liburing2,
          libsystemd0,
-         libgpiod2,
+         libgpiod3,
          libcryptsetup12,
          openssl,
          coreutils,
@@ -39,7 +40,8 @@ Depends: ${shlibs:Depends}, ${misc:Depends},
          sed,
          awk,
          raspi-utils-core,
-         kpartx
+         kpartx,
+         rpifwcrypto
 Suggests: net-tools,
           iproute2,
           util-linux,

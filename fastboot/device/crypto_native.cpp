@@ -31,7 +31,7 @@ bool CryptInitNative(const std::string& device_path, const std::string& label,
     params.label = label.c_str();
     
     r = crypt_format(cd, CRYPT_LUKS2, cipher.c_str(), mode.c_str(),
-                    NULL, NULL, 256 / 8, &params);
+                    NULL, NULL, 512 / 8, &params);
     
     if (r < 0) {
         *error_msg = "Failed to format LUKS device: " + std::string(strerror(-r));

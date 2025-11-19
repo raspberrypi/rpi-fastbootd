@@ -17,6 +17,10 @@
 #include "utility.h"
 
 #include <cstring>
+#include <expected>
+#include <iomanip>
+#include <sstream>
+#include <mutex>
 
 #include <dirent.h>
 #include <sys/stat.h>
@@ -32,6 +36,12 @@
 #include <android-base/logging.h>
 #include <android-base/properties.h>
 #include <android-base/strings.h>
+#include <rpifwcrypto.h>
+#include <openssl/decoder.h>
+#include <openssl/encoder.h>
+#include <openssl/evp.h>
+#include <openssl/bio.h>
+#include <openssl/pem.h>
 // #include <fs_mgr.h>
 // #include <fs_mgr/roots.h>
 // #include <fs_mgr_dm_linear.h>
@@ -125,6 +135,228 @@ namespace android {
 } // namespace android
 
 namespace rpi {
+    // Hardcoded key ID for ARM crypto device private key
+    constexpr uint32_t ARM_CRYPTO_DEVICE_PRIVATE_KEY_ID = 1;
+
+    // Static member definitions
+    std::expected<bool, RPI_FW_CRYPTO_STATUS> RpiFwCrypto::key_provisioned_status_ = std::unexpected(RPI_FW_CRYPTO_ERROR_UNKNOWN);
+    std::once_flag RpiFwCrypto::init_flag_;
+
+    /**
+     * Convert DER-encoded key data to PEM format
+     * @param der_data The DER-encoded key data as a vector
+     * @param is_private_key true for private keys, false for public keys
+     * @return std::expected containing PEM string on success, or int error code on failure
+     */
+    std::expected<std::string, int> RpiFwCrypto::ConvertDerToPem(const std::vector<uint8_t>& der_data, bool is_private_key) {
+            // Create decoder context using ternary operator
+            int key_selection = is_private_key ? OSSL_KEYMGMT_SELECT_PRIVATE_KEY : OSSL_KEYMGMT_SELECT_PUBLIC_KEY;
+            OSSL_DECODER_CTX* decoder_ctx = OSSL_DECODER_CTX_new_for_pkey(nullptr, "DER", nullptr, "EC",
+                                                                         key_selection, nullptr, nullptr);
+
+            if (!decoder_ctx) {
+                LOG(ERROR) << "Failed to create OSSL decoder context";
+                return std::unexpected(-1);
+            }
+
+            const unsigned char* der_ptr = der_data.data();
+            EVP_PKEY* pkey = nullptr;
+
+            if (is_private_key) {
+                pkey = d2i_PrivateKey(EVP_PKEY_EC, nullptr, &der_ptr, der_data.size());
+            } else {
+                pkey = d2i_PUBKEY(nullptr, &der_ptr, der_data.size());
+            }
+
+            OSSL_DECODER_CTX_free(decoder_ctx);
+
+            if (!pkey) {
+                LOG(ERROR) << "Failed to decode DER key data";
+                return std::unexpected(-2);
+            }
+
+            OSSL_ENCODER_CTX* encoder_ctx = OSSL_ENCODER_CTX_new_for_pkey(pkey, key_selection,
+                                                                        "PEM", nullptr, nullptr);
+
+            if (!encoder_ctx) {
+                LOG(ERROR) << "Failed to create OSSL encoder context";
+                EVP_PKEY_free(pkey);
+                return std::unexpected(-4);
+            }
+
+            // Create BIO for output
+            BIO* bio = BIO_new(BIO_s_mem());
+            if (!bio) {
+                LOG(ERROR) << "Failed to create BIO";
+                OSSL_ENCODER_CTX_free(encoder_ctx);
+                EVP_PKEY_free(pkey);
+                return std::unexpected(-5);
+            }
+
+            // Encode to PEM
+            if (!OSSL_ENCODER_to_bio(encoder_ctx, bio)) {
+                LOG(ERROR) << "Failed to encode key to PEM format";
+                BIO_free(bio);
+                OSSL_ENCODER_CTX_free(encoder_ctx);
+                EVP_PKEY_free(pkey);
+                return std::unexpected(-6);
+            }
+
+            // Extract PEM string from BIO
+            char* pem_data = nullptr;
+            long pem_len = BIO_get_mem_data(bio, &pem_data);
+            if (pem_len <= 0 || !pem_data) {
+                LOG(ERROR) << "Failed to extract PEM data from BIO";
+                BIO_free(bio);
+                OSSL_ENCODER_CTX_free(encoder_ctx);
+                EVP_PKEY_free(pkey);
+                return std::unexpected(-7);
+            }
+
+            std::string pem_string(pem_data, pem_len);
+
+            // Cleanup
+            BIO_free(bio);
+            OSSL_ENCODER_CTX_free(encoder_ctx);
+            EVP_PKEY_free(pkey);
+
+            return pem_string;
+        }
+
+    // Constructor implementation
+    RpiFwCrypto::RpiFwCrypto() {
+        // Thread-safe initialization of static member on first construction
+        std::call_once(init_flag_, []() {
+            key_provisioned_status_ = IsKeyProvisioned();
+        });
+    }
+
+    /**
+     * Get the public key for the device private key in PEM format
+     * @return std::expected containing the public key as a PEM string on success, or RPI_FW_CRYPTO_STATUS on failure
+     */
+    std::expected<std::string, RPI_FW_CRYPTO_STATUS> RpiFwCrypto::GetPublicKey() {
+        std::vector<uint8_t> pubkey_buffer(RPI_FW_CRYPTO_PUBLIC_KEY_MAX_SIZE);
+        size_t pubkey_len = 0;
+
+        int ret = rpi_fw_crypto_get_pubkey(0, ARM_CRYPTO_DEVICE_PRIVATE_KEY_ID,
+                                         pubkey_buffer.data(), pubkey_buffer.size(), &pubkey_len);
+
+        if (ret != 0) {
+            return std::unexpected(static_cast<RPI_FW_CRYPTO_STATUS>(ret));
+        }
+
+        // Resize vector to actual key length
+        pubkey_buffer.resize(pubkey_len);
+
+        // Convert DER to PEM format
+        auto pem_result = ConvertDerToPem(pubkey_buffer, false);
+        if (!pem_result) {
+            return std::unexpected(RPI_FW_CRYPTO_OPERATION_FAILED);
+        }
+
+        return *pem_result;
+    }
+
+    /**
+     * Get the private key for the device private key in PEM format
+     * @return std::expected containing the private key as a PEM string on success, or RPI_FW_CRYPTO_STATUS on failure
+     */
+    std::expected<std::string, RPI_FW_CRYPTO_STATUS> RpiFwCrypto::GetPrivateKey() {
+        std::vector<uint8_t> private_key_buffer(RPI_FW_CRYPTO_PRIVATE_KEY_MAX_SIZE);
+        size_t private_key_len = 0;
+
+        int ret = rpi_fw_crypto_get_private_key(0, ARM_CRYPTO_DEVICE_PRIVATE_KEY_ID,
+                                              private_key_buffer.data(), private_key_buffer.size(), &private_key_len);
+
+        if (ret != 0) {
+            return std::unexpected(static_cast<RPI_FW_CRYPTO_STATUS>(ret));
+        }
+
+        // Resize vector to actual key length
+        private_key_buffer.resize(private_key_len);
+
+        // Convert DER to PEM format
+        auto pem_result = ConvertDerToPem(private_key_buffer, true);
+        if (!pem_result) {
+            return std::unexpected(RPI_FW_CRYPTO_OPERATION_FAILED);
+        }
+
+        return *pem_result;
+    }
+
+    /**
+     * Check if a key has already been provisioned in the slot
+     * @return std::expected containing true if key is provisioned, false if not provisioned, or RPI_FW_CRYPTO_STATUS on failure
+     */
+    std::expected<bool, RPI_FW_CRYPTO_STATUS> RpiFwCrypto::IsKeyProvisioned() {
+        uint32_t status = 0;
+        int ret = rpi_fw_crypto_get_key_status(ARM_CRYPTO_DEVICE_PRIVATE_KEY_ID, &status);
+        if (ret != 0) {
+            LOG(ERROR) << "Failed to get key status: " << ret;
+            return std::unexpected(static_cast<RPI_FW_CRYPTO_STATUS>(ret));
+        }
+
+        // Check if the key has been provisioned by checking the device private key flag
+        bool is_provisioned = (status & ARM_CRYPTO_KEY_STATUS_TYPE_DEVICE_PRIVATE_KEY) != 0;
+
+        return is_provisioned;
+    }
+
+    /**
+     * Get the cached key provisioning status from construction
+     * @return std::expected containing the cached provisioning status
+     */
+    std::expected<bool, RPI_FW_CRYPTO_STATUS> RpiFwCrypto::GetCachedProvisioningStatus() {
+        return key_provisioned_status_;
+    }
+
+    /**
+     * Provision a new ECDSA key into the slot
+     * @return 0 on success, negative error code on failure
+     */
+    int RpiFwCrypto::ProvisionKey() {
+        return rpi_fw_crypto_gen_ecdsa_key(0, ARM_CRYPTO_DEVICE_PRIVATE_KEY_ID);
+    }
+
+    /**
+     * Calculate HMAC-SHA256 using the device private key
+     * @param message The message to HMAC as a vector
+     * @return std::expected containing the HMAC as a lowercase hex string on success, or RPI_FW_CRYPTO_STATUS on failure
+     */
+    std::expected<std::string, RPI_FW_CRYPTO_STATUS> RpiFwCrypto::CalculateHmac(const std::vector<uint8_t>& message) {
+        std::vector<uint8_t> hmac(32); // HMAC-SHA256 is always 32 bytes
+
+        int ret = rpi_fw_crypto_hmac_sha256(0, ARM_CRYPTO_DEVICE_PRIVATE_KEY_ID,
+                                          message.data(), message.size(), hmac.data());
+
+        if (ret != 0) {
+            return std::unexpected(static_cast<RPI_FW_CRYPTO_STATUS>(ret));
+        }
+
+        // Convert to lowercase hex string
+        std::ostringstream hex_stream;
+        hex_stream << std::hex << std::setfill('0');
+        for (uint8_t byte : hmac) {
+            hex_stream << std::setw(2) << static_cast<unsigned int>(byte);
+        }
+
+        return hex_stream.str();
+    }
+
+    /**
+     * Get the key status as a human-readable string
+     * @return String describing the current key status
+     */
+    std::string RpiFwCrypto::GetKeyStatusString() {
+        uint32_t status = 0;
+        int ret = rpi_fw_crypto_get_key_status(ARM_CRYPTO_DEVICE_PRIVATE_KEY_ID, &status);
+        if (ret != 0) {
+            return "Failed to get key status";
+        }
+        return std::string(rpi_fw_crypto_key_status_str(status));
+    }
+
     int process_spawn_blocking(int *r, std::string bin, char * const argv[], char * const envp[], posix_spawn_file_actions_t *file_actions) {
         int ret;
         pid_t pid;
