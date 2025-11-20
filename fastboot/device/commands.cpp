@@ -988,8 +988,8 @@ ssize_t bulk_write(int bulk_in, const char *buf, size_t length)
 
 // Native GPIO control using libgpiod v2.x API
 #ifdef HAVE_LIBGPIOD
-    // Parse and set GPIO lines: "chip line=value [line=value...]"
-    // Example: "gpiochip0 23=1" or "gpiochip0 23=1 24=0"
+    // Parse and set GPIO lines: "chip offset=value [offset=value...]"
+    // Example: "gpioset gpiochip0 23=1" or "gpioset gpiochip0 23=1 24=0"
     bool SetGpioLinesNative(FastbootDevice* device, const std::vector<std::string>& args) {
         if (args.size() < 3) {
             return false;
@@ -1100,7 +1100,7 @@ ssize_t bulk_write(int bulk_in, const char *buf, size_t length)
 
 #ifdef HAVE_LIBGPIOD
         // Try libgpiod first
-        if (SetGpioLinesNative(device, args)) {
+        if (SetGpioLinesNative(device, std::vector<std::string>(args.begin() + 1, args.end()))) {
             return device->WriteOkay("GPIO set successfully");
         }
         
