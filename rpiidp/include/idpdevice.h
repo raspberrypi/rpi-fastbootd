@@ -53,6 +53,10 @@ class IDPdevice {
          Error
       };
 
+      // Constructor for IDPdevice
+      // lukskey: Optional user-provided additional key for second key slot
+      // NOTE: This feature is not currently implemented - constructor will throw
+      //       exception if a key is provided (Some value)
       IDPdevice(std::optional<IDPkeyfile> lukskey = std::nullopt);
       ~IDPdevice();
 
@@ -81,6 +85,8 @@ class IDPdevice {
       std::uint64_t dcap_;
       std::uint64_t isize_;
       IDPdeviceWriter writer;
+      // Optional user-provided additional key for second key slot
+      // NOTE: This feature is not currently implemented
       std::optional<IDPkeyfile> lukskey_;
 
       bool validateDeviceIdent() const ;
@@ -89,6 +95,7 @@ class IDPdevice {
       bool validateProvisioningIntent() const;
       std::uint64_t computeImageStorageSize() const ;
       bool setPartBlockDev(IDPpartition * part, std::string);
+      bool checkFirmwareCryptoStatus() const;
 };
 
 

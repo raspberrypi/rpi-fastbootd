@@ -546,7 +546,7 @@ namespace {
           return device->WriteFail("IDP:already initialised");
        }
 
-       device->idp = new IDPdevice(std::filesystem::path(KEYFILE));
+       device->idp = new IDPdevice();
 
        if (!device->idp->Initialise(ptr_data, size)) {
           return device->WriteFail("IDP:invalid description");
