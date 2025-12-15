@@ -168,10 +168,9 @@ IDPdevice::IDPdevice(std::optional<IDPkeyfile> lukskey)
    writer(this),
    lukskey_(std::move(lukskey))
 {
+   // Throw exception if lukskey is provided - feature not currently implemented
    if (lukskey_) {
-      if (!std::filesystem::exists(*lukskey_)) {
-         throw std::runtime_error("LUKS key file does not exist: " + lukskey_->string());
-      }
+      throw std::runtime_error("User-provided additional LUKS key feature is not currently implemented");
    }
    std::random_device rd;
    std::mt19937_64 gen(rd());
@@ -414,23 +413,43 @@ bool IDPdevice::validateProvisioningIntent() const
    for (const auto& part : partitions_) {
       if (part.getParentIndex() == -1) {
          if (part.isCryptContainer()) {
-            if (!lukskey_ || !std::filesystem::exists(*lukskey_)) {
-               ERR("Encrypted container requested, but no LUKS key provided");
+            // Verify that firmware crypto HMAC operations are working
+            if (!checkFirmwareCryptoStatus()) {
+               ERR("Encrypted container requested, but firmware crypto HMAC operations are not available");
                approved = false;
                break;
             }
-
-            if (std::filesystem::file_size(*lukskey_) == 0) {
-               ERR("LUKS key file is empty: " << lukskey_->string());
-               approved = false;
-               break;
-            }
-
          }
       }
    }
 
    return approved;
+}
+
+
+bool IDPdevice::checkFirmwareCryptoStatus() const
+{
+   // Directly test HMAC capability with firmware crypto key slot 1
+   // Using /dev/null as input and output to verify we can perform HMAC operations
+   std::vector<std::string> args = {
+      "rpi-fw-crypto",
+      "hmac",
+      "--in", "/dev/null",
+      "--key-id", "1",
+      "--out", "/dev/null"
+   };
+
+   std::vector<char*> argv = utils::to_execvp_argv(args);
+   int rc = -1;
+   int ret = utils::process_spawn_blocking(&rc, argv[0], argv.data(), nullptr, nullptr);
+
+   if (ret || rc) {
+      ERR("Failed to perform HMAC test with firmware crypto key slot 1: exit " << rc << " ret " << ret);
+      return false;
+   }
+
+   // If we get here, HMAC operations are working with key slot 1
+   return true;
 }
 
 
@@ -661,11 +680,11 @@ bool IDPdeviceWriter::InitCryptPartitions()
    for (auto& part : device_->partitions_) {
       if (part.isCryptContainer()) {
 
-         ret = part.luks->Create(device_->image_.device_storage.BlockDev(part.num), *device_->lukskey_);
+         ret = part.luks->Create(device_->image_.device_storage.BlockDev(part.num), std::nullopt);
          if (!ret)
             break;
 
-         ret = part.luks->Open(device_->image_.device_storage.BlockDev(part.num), *device_->lukskey_);
+         ret = part.luks->Open(device_->image_.device_storage.BlockDev(part.num));
          if (!ret)
             break;
 

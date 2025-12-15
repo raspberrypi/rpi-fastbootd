@@ -84,8 +84,8 @@ struct IDPluks {
     }
 
     // Device Operations
-    bool Create(std::string_view blkdev, std::filesystem::path keyfile) const ;
-    bool Open(std::string_view blkdev, std::filesystem::path keyfile) const ;
+    bool Create(std::string_view blkdev, std::optional<std::string> userkey = std::nullopt) const ;
+    bool Open(std::string_view blkdev) const ;
     bool Close(std::optional<std::string_view> blkdev = std::nullopt) const ;
 
 private:
