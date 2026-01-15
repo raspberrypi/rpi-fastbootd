@@ -149,16 +149,16 @@ bool RPIparted::appendPartition(const PartitionAttributes& attrs) {
    fdisk_partition_partno_follow_default(new_part, 1);
 
    if (attrs.size_bytes) {
-      // Minimum number of sectors required to accomodate the requested size
+      // Minimum number of sectors required to accommodate the requested size
       uint64_t size_sectors = (attrs.size_bytes + sector_size_ - 1) / sector_size_;
 
       // Alignment grain in sectors
       uint64_t grain_sectors = grain_ / sector_size_;
 
-      // Pad by one grain to ensure we always allocate enough space
-      uint64_t padded_size = size_sectors + grain_sectors;
+      // Align up to the grain - already aligned inputs remain unchanged
+      size_sectors = ((size_sectors + grain_sectors - 1) / grain_sectors) * grain_sectors;
 
-      fdisk_partition_set_size(new_part, padded_size);
+      fdisk_partition_set_size(new_part, size_sectors);
       fdisk_partition_end_follow_default(new_part, 0);
    }
 
