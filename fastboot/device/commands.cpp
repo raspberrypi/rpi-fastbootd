@@ -1095,7 +1095,7 @@ ssize_t bulk_write(int bulk_in, const char *buf, size_t length)
 
     static bool oem_cmd_gpioset(FastbootDevice* device, const std::vector<std::string>& args) {
         if (args.size() < 3) {
-            return device->WriteFail("oem gpioset [OPTIONS] <line=value>...");
+            return device->WriteFail("oem gpioset gpiochip0 [OPTIONS] <line=value>...");
         }
 
 #ifdef HAVE_LIBGPIOD
