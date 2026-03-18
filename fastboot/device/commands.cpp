@@ -66,6 +66,8 @@
 // librpifwcrypto
 #include <rpifwcrypto.h>
 
+#include <openssl/evp.h>
+
 #include <iostream>
 #include <fstream>
 #include <cerrno>
@@ -1260,6 +1262,167 @@ ssize_t bulk_write(int bulk_in, const char *buf, size_t length)
         return device->WriteFail("veritysetup command fallback not yet implemented for appended mode");
     }
 
+    // -------------------------------------------------------------------------
+    // oem bmap-load <block_device>   e.g. oem bmap-load mmcblk0
+    // oem bmap-verify <block_device> e.g. oem bmap-verify mmcblk0
+    //
+    // Binary bmap format (little-endian):
+    //   Header (16 bytes):
+    //     uint32 magic       = 0x50414D42 ('BMAP')
+    //     uint32 block_size  (typically 4096)
+    //     uint32 range_count
+    //     uint32 reserved    = 0
+    //   Per range (40 bytes each):
+    //     uint32 start_block  (inclusive)
+    //     uint32 end_block    (inclusive)
+    //     uint8  sha256[32]
+    // -------------------------------------------------------------------------
+
+    static constexpr uint32_t BMAP_MAGIC = 0x50414D42;
+
+    struct BmapHeader {
+        uint32_t magic;
+        uint32_t block_size;
+        uint32_t range_count;
+        uint32_t reserved;
+    };
+
+    struct BmapRange {
+        uint32_t start_block;
+        uint32_t end_block;
+        uint8_t  sha256[32];
+    };
+
+    struct BmapState {
+        std::string block_device;
+        uint32_t block_size = 0;
+        std::vector<BmapRange> ranges;
+    };
+
+    static BmapState g_bmap_state;
+
+    static bool oem_cmd_bmap_load(FastbootDevice* device, const std::vector<std::string>& args) {
+        if (args.size() < 3) {
+            return device->WriteFail("Usage: oem bmap-load <block_device>");
+        }
+        const std::string& block_device = args[2];
+
+        const std::vector<char>& buf = device->download_data();
+        if (buf.size() < sizeof(BmapHeader)) {
+            return device->WriteFail("bmap-load: download buffer too small for header");
+        }
+
+        BmapHeader hdr;
+        memcpy(&hdr, buf.data(), sizeof(hdr));
+
+        if (hdr.magic != BMAP_MAGIC) {
+            return device->WriteFail("bmap-load: bad magic");
+        }
+        if (hdr.block_size == 0 || (hdr.block_size & (hdr.block_size - 1)) != 0) {
+            return device->WriteFail("bmap-load: block_size must be a power of two");
+        }
+
+        size_t expected = sizeof(BmapHeader) + (size_t)hdr.range_count * sizeof(BmapRange);
+        if (buf.size() < expected) {
+            return device->WriteFail("bmap-load: download buffer too small for declared ranges");
+        }
+
+        g_bmap_state.block_device = "/dev/" + block_device;
+        g_bmap_state.block_size   = hdr.block_size;
+        g_bmap_state.ranges.resize(hdr.range_count);
+        memcpy(g_bmap_state.ranges.data(), buf.data() + sizeof(BmapHeader),
+               hdr.range_count * sizeof(BmapRange));
+
+        return device->WriteOkay(android::base::StringPrintf(
+                "bmap loaded: %u ranges, block_size=%u, device=%s",
+                hdr.range_count, hdr.block_size, block_device.c_str()));
+    }
+
+    static bool oem_cmd_bmap_verify(FastbootDevice* device, const std::vector<std::string>& args) {
+        if (args.size() < 3) {
+            return device->WriteFail("Usage: oem bmap-verify <block_device>");
+        }
+        const std::string block_device = "/dev/" + args[2];
+
+        if (g_bmap_state.ranges.empty()) {
+            return device->WriteFail("bmap-verify: no bmap loaded; run oem bmap-load first");
+        }
+        if (g_bmap_state.block_device != block_device) {
+            return device->WriteFail("bmap-verify: loaded bmap is for " +
+                                     g_bmap_state.block_device + ", not " + block_device);
+        }
+
+        PartitionHandle handle;
+        if (!OpenPartition(device, block_device, &handle, O_RDONLY)) {
+            return device->WriteFail("bmap-verify: cannot access " + block_device);
+        }
+        if (!handle.Open(O_RDONLY)) {
+            return device->WriteFail("bmap-verify: cannot open " + block_device);
+        }
+
+        const uint32_t block_size  = g_bmap_state.block_size;
+        const uint32_t range_count = g_bmap_state.ranges.size();
+        constexpr size_t kReadBuf  = 1 * 1024 * 1024; // 1 MB chunks
+        std::vector<uint8_t> read_buf(kReadBuf);
+
+        for (uint32_t i = 0; i < range_count; i++) {
+            const BmapRange& r = g_bmap_state.ranges[i];
+
+            device->WriteInfo(android::base::StringPrintf(
+                    "verifying range %u/%u (blocks %u-%u)",
+                    i, range_count, r.start_block, r.end_block));
+
+            uint64_t offset     = (uint64_t)r.start_block * block_size;
+            uint64_t range_bytes = (uint64_t)(r.end_block - r.start_block + 1) * block_size;
+
+            if (lseek64(handle.fd(), (off64_t)offset, SEEK_SET) < 0) {
+                return device->WriteFail(android::base::StringPrintf(
+                        "bmap-verify: seek failed for range %u: %s", i, strerror(errno)));
+            }
+
+            EVP_MD_CTX* ctx = EVP_MD_CTX_new();
+            if (!ctx) return device->WriteFail("bmap-verify: failed to allocate hash context");
+
+            EVP_DigestInit_ex(ctx, EVP_sha256(), nullptr);
+
+            uint64_t remaining = range_bytes;
+            bool io_error = false;
+            while (remaining > 0) {
+                size_t to_read = (size_t)std::min(remaining, (uint64_t)kReadBuf);
+                ssize_t n = read(handle.fd(), read_buf.data(), to_read);
+                if (n <= 0) {
+                    device->WriteFail(android::base::StringPrintf(
+                            "bmap-verify: read error at range %u: %s", i, strerror(errno)));
+                    io_error = true;
+                    break;
+                }
+                EVP_DigestUpdate(ctx, read_buf.data(), n);
+                remaining -= n;
+            }
+
+            uint8_t actual[32];
+            unsigned int digest_len = 0;
+            EVP_DigestFinal_ex(ctx, actual, &digest_len);
+            EVP_MD_CTX_free(ctx);
+
+            if (io_error) return false;
+
+            if (memcmp(actual, r.sha256, 32) != 0) {
+                // Format both hashes as hex for the failure message
+                char expected_hex[65], actual_hex[65];
+                for (int j = 0; j < 32; j++) {
+                    snprintf(expected_hex + j*2, 3, "%02x", r.sha256[j]);
+                    snprintf(actual_hex   + j*2, 3, "%02x", actual[j]);
+                }
+                return device->WriteFail(android::base::StringPrintf(
+                        "%u:%s:%s", i, expected_hex, actual_hex));
+            }
+        }
+
+        return device->WriteOkay(android::base::StringPrintf(
+                "verified %u ranges ok", range_count));
+    }
+
     // oem fwcrypto <status|init>
     static bool oem_cmd_fwcrypto(FastbootDevice* device, const std::vector<std::string>& args) {
         if (args.size() < 3) {
@@ -1351,6 +1514,10 @@ bool OemCmdHandler(FastbootDevice* device, const std::vector<std::string>& args)
         return oem_cmd_idp_done(device, split_args);
     } else if (command_name == "fwcrypto") {
         return oem_cmd_fwcrypto(device, split_args);
+    } else if (command_name == "bmap-load") {
+        return oem_cmd_bmap_load(device, split_args);
+    } else if (command_name == "bmap-verify") {
+        return oem_cmd_bmap_verify(device, split_args);
     }
 
     return device->WriteFail("Unknown OEM command.");
