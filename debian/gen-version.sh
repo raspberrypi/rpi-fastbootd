@@ -16,9 +16,13 @@ PACKAGE_NAME="rpi-fastbootd"
 DISTRIBUTION="unstable"
 MAINTAINER="Raspberry Pi Signed Boot Team <applications@raspberrypi.com>"
 
-# Get total commit count for version
+# Get total commit count for progress reporting
 GIT_COMMITS=$(git rev-list --count ${BASELINE_COMMIT}^..HEAD 2>/dev/null || echo "0")
-VERSION="14.0.0+${GIT_COMMITS}"
+
+# Version from HEAD: 14.0.0~git<YYYYMMDD>.<7-char hash>
+HEAD_DATE=$(git show -s --format=%cd --date=format:%Y%m%d HEAD)
+HEAD_HASH=$(git show -s --format=%h --abbrev=7 HEAD)
+VERSION="14.0.0~git${HEAD_DATE}.${HEAD_HASH}"
 
 echo "Generating debian/changelog with version ${VERSION}..."
 
@@ -29,9 +33,10 @@ echo "Generating debian/changelog with version ${VERSION}..."
 mapfile -t COMMITS < <(git rev-list ${BASELINE_COMMIT}^..HEAD 2>/dev/null || true)
 
 # Generate entry for each commit (newest first)
-REVISION=${GIT_COMMITS}
 for commit in "${COMMITS[@]}"; do
-    COMMIT_VERSION="14.0.0+${REVISION}"
+    COMMIT_DATE_SHORT=$(git show -s --format=%cd --date=format:%Y%m%d "${commit}")
+    COMMIT_HASH=$(git show -s --format=%h --abbrev=7 "${commit}")
+    COMMIT_VERSION="14.0.0~git${COMMIT_DATE_SHORT}.${COMMIT_HASH}"
     COMMIT_DATE=$(git show -s --format=%aD "${commit}")
     COMMIT_SUBJECT=$(git show -s --format=%s "${commit}")
     COMMIT_BODY=$(git show -s --format=%b "${commit}" | sed 's/^/  /')
@@ -56,8 +61,6 @@ EOF
     echo "" >> "${OUTPUT}"
     echo " -- ${MAINTAINER}  ${COMMIT_DATE}" >> "${OUTPUT}"
     echo "" >> "${OUTPUT}"
-    
-    ((REVISION--))
 done
 
 # Append template (baseline entry) if it exists

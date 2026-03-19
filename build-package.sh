@@ -101,11 +101,12 @@ echo "========================================"
 echo "Build complete!"
 echo "========================================"
 echo
-echo "Package location: ../"
-ls -lh ../*.deb 2>/dev/null || echo "Warning: Package file not found"
+BUILT_DEB="../rpi-fastbootd_${VERSION}_arm64.deb"
+echo "Package location: ${BUILT_DEB}"
+ls -lh "${BUILT_DEB}" 2>/dev/null || echo "Warning: Package file not found"
 echo
 echo "Install with:"
-echo "  sudo dpkg -i ../rpi-fastbootd_${VERSION}_arm64.deb"
+echo "  sudo dpkg -i ${BUILT_DEB}"
 echo
 if [ -f "obj-aarch64-linux-gnu/LICENSE_INFO" ]; then
     LICENSE_TYPE=$(cat obj-aarch64-linux-gnu/LICENSE_INFO)
