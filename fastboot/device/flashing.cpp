@@ -30,49 +30,16 @@
 #include <android-base/logging.h>
 #include <android-base/properties.h>
 #include <android-base/strings.h>
-// #include <ext4_utils/ext4_utils.h>
-// #include <fs_mgr_overlayfs.h>
-// #include <fstab/fstab.h>
-// #include <libavb/libavb.h>
-// #include <liblp/builder.h>
-// #include <liblp/liblp.h>
-// #include <libsnapshot/snapshot.h>
 #include <sparse/sparse.h>
 
 #include "fastboot_device.h"
 #include "utility.h"
 
-// using namespace android::fs_mgr;
 using namespace std::literals;
 
 namespace {
 
 constexpr uint32_t SPARSE_HEADER_MAGIC = 0xed26ff3a;
-
-// void WipeOverlayfsForPartition(FastbootDevice* device, const std::string& partition_name) {
-//     // May be called, in the case of sparse data, multiple times so cache/skip.
-//     static std::set<std::string> wiped;
-//     if (wiped.find(partition_name) != wiped.end()) return;
-//     wiped.insert(partition_name);
-//     // Following appears to have a first time 2% impact on flashing speeds.
-
-//     // Convert partition_name to a validated mount point and wipe.
-//     Fstab fstab;
-//     ReadDefaultFstab(&fstab);
-
-//     std::optional<AutoMountMetadata> mount_metadata;
-//     for (const auto& entry : fstab) {
-//         auto partition = android::base::Basename(entry.mount_point);
-//         if ("/" == entry.mount_point) {
-//             partition = "system";
-//         }
-
-//         if ((partition + device->GetCurrentSlot()) == partition_name) {
-//             mount_metadata.emplace();
-//             android::fs_mgr::TeardownAllOverlayForMountPoint(entry.mount_point);
-//         }
-//     }
-// }
 
 }  // namespace
 

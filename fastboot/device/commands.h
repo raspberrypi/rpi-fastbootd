@@ -45,11 +45,5 @@ bool GetVarHandler(FastbootDevice* device, const std::vector<std::string>& args)
 bool EraseHandler(FastbootDevice* device, const std::vector<std::string>& args);
 bool FlashHandler(FastbootDevice* device, const std::vector<std::string>& args);
 bool UploadHandler(FastbootDevice* device, const std::vector<std::string>& args);
-bool CreatePartitionHandler(FastbootDevice* device, const std::vector<std::string>& args);
-bool DeletePartitionHandler(FastbootDevice* device, const std::vector<std::string>& args);
-bool ResizePartitionHandler(FastbootDevice* device, const std::vector<std::string>& args);
-// bool UpdateSuperHandler(FastbootDevice* device, const std::vector<std::string>& args);
 bool OemCmdHandler(FastbootDevice* device, const std::vector<std::string>& args);
-// bool GsiHandler(FastbootDevice* device, const std::vector<std::string>& args);
-// bool SnapshotUpdateHandler(FastbootDevice* device, const std::vector<std::string>& args);
 bool FetchHandler(FastbootDevice* device, const std::vector<std::string>& args);

@@ -42,15 +42,8 @@
 #include <openssl/evp.h>
 #include <openssl/bio.h>
 #include <openssl/pem.h>
-// #include <fs_mgr.h>
-// #include <fs_mgr/roots.h>
-// #include <fs_mgr_dm_linear.h>
-// #include <liblp/builder.h>
-// #include <liblp/liblp.h>
-
 #include "fastboot_device.h"
 
-// using namespace android::fs_mgr;
 using namespace std::chrono_literals;
 using android::base::unique_fd;
 

@@ -18,18 +18,9 @@
 
 #include <algorithm>
 
-// #include <BootControlClient.h>
 #include <android-base/logging.h>
 #include <android-base/properties.h>
 #include <android-base/strings.h>
-// #include <android/binder_manager.h>
-// #include <android/hardware/boot/1.0/IBootControl.h>
-// #include <android/hardware/fastboot/1.1/IFastboot.h>
-// #include <fastbootshim.h>
-// #include <fs_mgr.h>
-// #include <fs_mgr/roots.h>
-// #include <health-shim/shim.h>
-// #include <healthhalutils/HealthHalUtils.h>
 
 #include "constants.h"
 #include "flashing.h"
@@ -37,57 +28,8 @@
 #include "usb_client.h"
 
 using std::string_literals::operator""s;
-// using android::fs_mgr::EnsurePathUnmounted;
-// using android::fs_mgr::Fstab;
-// using ::android::hardware::hidl_string;
-// using ::android::hardware::fastboot::V1_1::IFastboot;
-// using BootControlClient = FastbootDevice::BootControlClient;
 
 namespace sph = std::placeholders;
-
-// std::shared_ptr<aidl::android::hardware::health::IHealth> get_health_service() {
-//     using aidl::android::hardware::health::IHealth;
-//     using HidlHealth = android::hardware::health::V2_0::IHealth;
-//     using aidl::android::hardware::health::HealthShim;
-//     auto service_name = IHealth::descriptor + "/default"s;
-//     if (AServiceManager_isDeclared(service_name.c_str())) {
-//         ndk::SpAIBinder binder(AServiceManager_waitForService(service_name.c_str()));
-//         std::shared_ptr<IHealth> health = IHealth::fromBinder(binder);
-//         if (health != nullptr) return health;
-//         LOG(WARNING) << "AIDL health service is declared, but it cannot be retrieved.";
-//     }
-//     LOG(INFO) << "Unable to get AIDL health service, trying HIDL...";
-//     android::sp<HidlHealth> hidl_health = android::hardware::health::V2_0::get_health_service();
-//     if (hidl_health != nullptr) {
-//         return ndk::SharedRefBase::make<HealthShim>(hidl_health);
-//     }
-//     LOG(WARNING) << "No health implementation is found.";
-//     return nullptr;
-// }
-
-// std::shared_ptr<aidl::android::hardware::fastboot::IFastboot> get_fastboot_service() {
-//     using aidl::android::hardware::fastboot::IFastboot;
-//     using HidlFastboot = android::hardware::fastboot::V1_1::IFastboot;
-//     using aidl::android::hardware::fastboot::FastbootShim;
-//     auto service_name = IFastboot::descriptor + "/default"s;
-//     if (AServiceManager_isDeclared(service_name.c_str())) {
-//         ndk::SpAIBinder binder(AServiceManager_waitForService(service_name.c_str()));
-//         std::shared_ptr<IFastboot> fastboot = IFastboot::fromBinder(binder);
-//         if (fastboot != nullptr) {
-//             LOG(INFO) << "Found and using AIDL fastboot service";
-//             return fastboot;
-//         }
-//         LOG(WARNING) << "AIDL fastboot service is declared, but it cannot be retrieved.";
-//     }
-//     LOG(INFO) << "Unable to get AIDL fastboot service, trying HIDL...";
-//     android::sp<HidlFastboot> hidl_fastboot = HidlFastboot::getService();
-//     if (hidl_fastboot != nullptr) {
-//         LOG(INFO) << "Found and now using fastboot HIDL implementation";
-//         return ndk::SharedRefBase::make<FastbootShim>(hidl_fastboot);
-//     }
-//     LOG(WARNING) << "No fastboot implementation is found.";
-//     return nullptr;
-// }
 
 FastbootDevice::FastbootDevice(const char* mode)
     : kCommandMap({
@@ -102,13 +44,9 @@ FastbootDevice::FastbootDevice(const char* mode)
             //   {FB_CMD_REBOOT_RECOVERY, RebootRecoveryHandler},
               {FB_CMD_ERASE, EraseHandler},
               {FB_CMD_FLASH, FlashHandler},
-              {FB_CMD_CREATE_PARTITION, CreatePartitionHandler},
-              {FB_CMD_DELETE_PARTITION, DeletePartitionHandler},
-              {FB_CMD_RESIZE_PARTITION, ResizePartitionHandler},
               {FB_CMD_OEM, OemCmdHandler},
               {FB_CMD_FETCH, FetchHandler},
       }),
-    //   fastboot_hal_(get_fastboot_service()),
       active_slot_("") {
     std::string modestr = mode;
     if (modestr.find("tcp") != std::string::npos) {

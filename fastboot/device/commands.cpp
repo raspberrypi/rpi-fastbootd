@@ -40,21 +40,8 @@
 #ifdef HAVE_LIBCRYPTSETUP
 #include "crypto_native.h"
 #endif
-// #include <android/hardware/boot/1.1/IBootControl.h>
-// #include <cutils/android_reboot.h>
-// #include <ext4_utils/wipe.h>
-// #include <fs_mgr.h>
-// #include <fs_mgr/roots.h>
-// #include <libgsi/libgsi.h>
-// #include <liblp/builder.h>
-// #include <liblp/liblp.h>
-// #include <libsnapshot/snapshot.h>
-//#include <storage_literals/storage_literals.h>
 #include <uuid/uuid.h>
 
-// #include <bootloader_message/bootloader_message.h>
-
-// #include "BootControlClient.h"
 #include "constants.h"
 #include "fastboot_device.h"
 #include "flashing.h"
@@ -347,14 +334,6 @@ static std::string generateLuksKeyFromPartition(const std::string& block_device)
     return *hmac_result;
 }
 
-static void PostWipeData() {
-    std::string err;
-    // Reset mte state of device.
-    // if (!WriteMiscMemtagMessage({}, &err)) {
-    //     LOG(ERROR) << "Failed to reset MTE state: " << err;
-    // }
-}
-
 const std::unordered_map<std::string, std::function<bool(FastbootDevice*)>> kSpecialVars = {
         {"all", GetVarAll},
         {"dmesg", GetDmesg},
@@ -386,29 +365,6 @@ bool GetVarHandler(FastbootDevice* device, const std::vector<std::string>& args)
         return device->WriteFail(message);
     }
     return device->WriteOkay(message);
-}
-
-bool OemPostWipeData(FastbootDevice* device) {
-    // auto fastboot_hal = device->fastboot_hal();
-    // if (!fastboot_hal) {
-        return false;
-    // }
-
-    // auto status = fastboot_hal->doOemSpecificErase();
-    // if (status.isOk()) {
-    //     device->WriteStatus(FastbootResult::OKAY, "Erasing succeeded");
-    //     return true;
-    // }
-    // switch (status.getExceptionCode()) {
-    //     case EX_UNSUPPORTED_OPERATION:
-    //         return false;
-    //     case EX_SERVICE_SPECIFIC:
-    //         device->WriteStatus(FastbootResult::FAIL, status.getDescription());
-    //         return false;
-    //     default:
-    //         LOG(ERROR) << "Erase operation failed" << status.getDescription();
-    //         return false;
-    // }
 }
 
 bool EraseHandler(FastbootDevice* device, const std::vector<std::string>& args) {
@@ -1748,118 +1704,6 @@ bool RebootFastbootHandler(FastbootDevice* device, const std::vector<std::string
 //         return false;
 //     }
 //     return UpdateAllPartitionMetadata(device_, super_device_, *metadata.get());
-// }
-
-bool CreatePartitionHandler(FastbootDevice* device, const std::vector<std::string>& args) {
-    if (args.size() < 3) {
-        return device->WriteFail("Invalid partition name and size");
-    }
-
-    if (GetDeviceLockStatus()) {
-        return device->WriteStatus(FastbootResult::FAIL, "Command not available on locked devices");
-    }
-
-    uint64_t partition_size;
-    std::string partition_name = args[1];
-    if (!android::base::ParseUint(args[2].c_str(), &partition_size)) {
-        return device->WriteFail("Invalid partition size");
-    }
-
-    // PartitionBuilder builder(device, partition_name);
-    // if (!builder.Valid()) {
-    //     return device->WriteFail("Could not open super partition");
-    // }
-    // // TODO(112433293) Disallow if the name is in the physical table as well.
-    // if (builder->FindPartition(partition_name)) {
-    //     return device->WriteFail("Partition already exists");
-    // }
-
-    // auto partition = builder->AddPartition(partition_name, 0);
-    // if (!partition) {
-    //     return device->WriteFail("Failed to add partition");
-    // }
-    // if (!builder->ResizePartition(partition, partition_size)) {
-    //     builder->RemovePartition(partition_name);
-    //     return device->WriteFail("Not enough space for partition");
-    // }
-    // if (!builder.Write()) {
-        return device->WriteFail("Failed to write partition table");
-    // }
-    // return device->WriteOkay("Partition created");
-}
-
-bool DeletePartitionHandler(FastbootDevice* device, const std::vector<std::string>& args) {
-    if (args.size() < 2) {
-        return device->WriteFail("Invalid partition name and size");
-    }
-
-    if (GetDeviceLockStatus()) {
-        return device->WriteStatus(FastbootResult::FAIL, "Command not available on locked devices");
-    }
-
-    std::string partition_name = args[1];
-
-    // PartitionBuilder builder(device, partition_name);
-    // if (!builder.Valid()) {
-    //     return device->WriteFail("Could not open super partition");
-    // }
-    // builder->RemovePartition(partition_name);
-    // if (!builder.Write()) {
-        return device->WriteFail("Failed to write partition table");
-    // }
-    // return device->WriteOkay("Partition deleted");
-}
-
-bool ResizePartitionHandler(FastbootDevice* device, const std::vector<std::string>& args) {
-    if (args.size() < 3) {
-        return device->WriteFail("Invalid partition name and size");
-    }
-
-    if (GetDeviceLockStatus()) {
-        return device->WriteStatus(FastbootResult::FAIL, "Command not available on locked devices");
-    }
-
-    uint64_t partition_size;
-    std::string partition_name = args[1];
-    if (!android::base::ParseUint(args[2].c_str(), &partition_size)) {
-        return device->WriteFail("Invalid partition size");
-    }
-
-    // PartitionBuilder builder(device, partition_name);
-    // if (!builder.Valid()) {
-    //     return device->WriteFail("Could not open super partition");
-    // }
-
-    // auto partition = builder->FindPartition(partition_name);
-    // if (!partition) {
-    //     return device->WriteFail("Partition does not exist");
-    // }
-
-    // // Remove the updated flag to cancel any snapshots.
-    // uint32_t attrs = partition->attributes();
-    // partition->set_attributes(attrs & ~LP_PARTITION_ATTR_UPDATED);
-
-    // if (!builder->ResizePartition(partition, partition_size)) {
-    //     return device->WriteFail("Not enough space to resize partition");
-    // }
-    // if (!builder.Write()) {
-        return device->WriteFail("Failed to write partition table");
-    // }
-    // return device->WriteOkay("Partition resized");
-}
-
-// void CancelPartitionSnapshot(FastbootDevice* device, const std::string& partition_name) {
-//     PartitionBuilder builder(device, partition_name);
-//     if (!builder.Valid()) return;
-
-//     auto partition = builder->FindPartition(partition_name);
-//     if (!partition) return;
-
-//     // Remove the updated flag to cancel any snapshots.
-//     uint32_t attrs = partition->attributes();
-//     partition->set_attributes(attrs & ~LP_PARTITION_ATTR_UPDATED);
-
-//     builder.Write();
 // }
 
 bool FlashHandler(FastbootDevice* device, const std::vector<std::string>& args) {

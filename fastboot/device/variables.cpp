@@ -28,11 +28,6 @@
 #include <android-base/properties.h>
 #include <android-base/stringprintf.h>
 #include <android-base/strings.h>
-// #include <android/hardware/boot/1.1/IBootControl.h>
-// #include <ext4_utils/ext4_utils.h>
-// #include <fs_mgr.h>
-// #include <liblp/liblp.h>
-
 // Network interface access via getifaddrs() (POSIX libc)
 #include <ifaddrs.h>
 #include <netinet/in.h>
@@ -42,12 +37,10 @@
 // Kernel log access via klogctl() (Linux syscall)
 #include <sys/klog.h>
 
-// #include "BootControlClient.h"
 #include "fastboot_device.h"
 #include "flashing.h"
 #include "utility.h"
 #include "spawn.h"
-#include "wait.h"
 
 #include <rpifwcrypto.h>
 
