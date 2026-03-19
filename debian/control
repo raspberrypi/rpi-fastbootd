@@ -17,10 +17,10 @@ Build-Depends: debhelper-compat (= 13),
                libcryptsetup-dev [!nocryptsetup],
                librpifwcrypto-dev,
                git
-Standards-Version: 4.6.2
+Standards-Version: 4.7.2
 Homepage: https://www.raspberrypi.com/
-Vcs-Git: https://github.com/raspberrypi/android_platform_system_core.git
-Vcs-Browser: https://github.com/raspberrypi/android_platform_system_core
+Vcs-Git: https://github.com/raspberrypi/rpi-fastbootd.git
+Vcs-Browser: https://github.com/raspberrypi/rpi-fastbootd
 Rules-Requires-Root: no
 
 Package: rpi-fastbootd
@@ -41,7 +41,7 @@ Depends: ${shlibs:Depends}, ${misc:Depends},
          awk,
          raspi-utils-core,
          kpartx,
-         rpifwcrypto
+         librpifwcrypto0
 Suggests: net-tools,
           iproute2,
           util-linux,
