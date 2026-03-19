@@ -42,7 +42,7 @@ struct IDPstorage {
             base = "/dev/mmcblk0";
             break;
          case storage_type::NVME:
-            base = "/dev/nvme0p1";
+            base = "/dev/nvme0n1";
             break;
          default:
             base = "";
