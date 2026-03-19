@@ -485,7 +485,7 @@ std::vector<std::string> ListPartitions(FastbootDevice* device) {
             continue;
         }
         struct stat s;
-        std::string path = std::string(de->d_name);
+        std::string path = "/dev/" + std::string(de->d_name);
         if (!stat(path.c_str(), &s) && S_ISBLK(s.st_mode)) {
             partitions.emplace_back(de->d_name);
         }
