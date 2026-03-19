@@ -41,6 +41,7 @@
 #include "flashing.h"
 #include "utility.h"
 #include "spawn.h"
+#include "wait.h"
 
 #include <rpifwcrypto.h>
 
@@ -1592,7 +1593,7 @@ bool GetIpv4Address(FastbootDevice* /* device */, const std::vector<std::string>
     }
     
     // Fallback to commands
-    LOG(WARNING) << "getifaddrs() failed, falling back to ifconfig/ip commands";
+    LOG(WARNING) << "No IPv4 address found via native interface lookup, trying fallback commands";
     std::string output;
     const char* output_file = "/tmp/ipv4-address.log";
     
@@ -1671,9 +1672,9 @@ bool GetIpv4Netmask(FastbootDevice* /* device */, const std::vector<std::string>
             return true;
         }
     }
-    
+
     // Fallback to commands
-    LOG(WARNING) << "getifaddrs() failed, falling back to ifconfig/ip commands";
+    LOG(WARNING) << "No IPv4 netmask found via native interface lookup, trying fallback commands";
     std::string output;
     const char* output_file = "/tmp/ipv4-netmask.log";
     
@@ -1727,7 +1728,7 @@ bool GetIpv6Address(FastbootDevice* /* device */, const std::vector<std::string>
     }
     
     // Fallback to commands
-    LOG(WARNING) << "getifaddrs() failed, falling back to ip commands";
+    LOG(WARNING) << "No IPv6 address found via native interface lookup, trying fallback commands";
     std::string output;
     const char* output_file = "/tmp/ipv6-address.log";
     
@@ -1806,9 +1807,9 @@ bool GetIpv6Netmask(FastbootDevice* /* device */, const std::vector<std::string>
             return true;
         }
     }
-    
+
     // Fallback to commands
-    LOG(WARNING) << "getifaddrs() failed, falling back to ip commands";
+    LOG(WARNING) << "No IPv6 prefix found via native interface lookup, trying fallback commands";
     std::string output;
     const char* output_file = "/tmp/ipv6-netmask.log";
     
