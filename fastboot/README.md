@@ -210,11 +210,16 @@ Run on the Raspberry Pi:
 ```bash
 git clone https://github.com/raspberrypi/rpi-fastbootd
 cd rpi-fastbootd
-cmake -B build -S .
-cmake --build build -j$(nproc)
+./build-package.sh
 ```
 
-**Output:** `build/fastboot/fastbootd` (device daemon only)
+**Output:** `../rpi-fastbootd_<version>_arm64.deb`
+
+Install with:
+
+```bash
+sudo dpkg -i ../rpi-fastbootd_*_arm64.deb
+```
 
 **Note:** This builds **only the device-side daemon** (`fastbootd`). The client tool (`fastboot`) should be installed from your OS package manager as shown in Prerequisites.
 
@@ -227,9 +232,7 @@ cmake --build build -j$(nproc)
 By default, fastbootd is licensed under the **Apache License 2.0**, matching the upstream AOSP fastbootd.
 
 ```bash
-# Build without libcryptsetup (Apache 2.0 only)
-cmake -B build -S . -DCRYPTSETUP_FOUND=OFF
-cmake --build build
+./build-package.sh --no-cryptsetup
 ```
 
 **Result:** Binary licensed under Apache 2.0 ✅
@@ -239,24 +242,17 @@ cmake --build build
 ⚠️ **Important:** If you link against `libcryptsetup`, the entire binary becomes **GPLv3** licensed due to GPLv3's requirements.
 
 ```bash
-# Build with libcryptsetup (GPLv3)
-cmake -B build -S .
-cmake --build build
+./build-package.sh
 ```
 
 **Result:** Binary licensed under GPLv3 due to libcryptsetup linkage ⚠️
 
 ### Skipping libcryptsetup (Maintaining Apache 2.0)
 
-To keep Apache 2.0 licensing, disable libcryptsetup at build time:
+To keep Apache 2.0 licensing, build without libcryptsetup:
 
 ```bash
-# Option 1: CMake flag
-cmake -B build -S . -DCRYPTSETUP_FOUND=OFF
-
-# Option 2: Remove libcryptsetup before building
-sudo apt-get remove libcryptsetup-dev
-cmake -B build -S .
+./build-package.sh --no-cryptsetup
 ```
 
 **Fallback behavior:** Fastbootd will use the `cryptsetup` command-line tool instead of native library calls. This requires:
@@ -272,55 +268,39 @@ With libcryptsetup    → GPLv3 ⚠️
 
 ---
 
-## CPack / Packaging
+## Packaging
 
-This project uses CPack to generate `.deb` packages for easy deployment.
+This project uses `dpkg-buildpackage` (via `./build-package.sh`) to generate `.deb` packages.
 
 ### Creating Packages
 
 ```bash
-# Build and package
-cmake -B build -S .
-cmake --build build
-cd build
-cpack
+# Standard build (GPLv3)
+./build-package.sh
+
+# Apache 2.0 build
+./build-package.sh --no-cryptsetup
 ```
 
-**Output:** `dist/rpi-fastbootd_14.0.0-<revision>_arm64.deb`
+**Output:** `../rpi-fastbootd_<version>_arm64.deb`
 
 ### Package Naming Convention
 
 ```
-rpi-fastbootd_<VERSION>-<REVISION>_<ARCH>.deb
+rpi-fastbootd_<VERSION>_<ARCH>.deb
 ```
 
 Where:
-- **rpi-fastbootd** - Package name prefix (from `CPACK_PACKAGE_NAME`)
-- **VERSION** - `14.0.0` (from `PROJECT_VERSION` in CMakeLists.txt)
-- **REVISION** - Git commit count since Android 14 baseline (auto-calculated)
-- **ARCH** - `arm64` (from `CPACK_DEBIAN_PACKAGE_ARCHITECTURE`)
+- **rpi-fastbootd** - Package name (from `debian/control`)
+- **VERSION** - `14.0.0~git<YYYYMMDD>.<hash>` (auto-calculated by `debian/gen-version.sh`)
+- **ARCH** - `arm64` (target architecture)
 
-**Example:** `rpi-fastbootd_14.0.0-247_arm64.deb`
-
-### Customizing Package Metadata
-
-Edit `cmake/Packaging.cmake`:
-
-```cmake
-set(CPACK_PACKAGE_NAME "rpi-${PROJECT_NAME}")
-set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Raspberry Pi Fastbootd")
-set(CPACK_PACKAGE_VENDOR "Raspberry Pi Ltd")
-set(CPACK_DEBIAN_PACKAGE_MAINTAINER "Raspberry Pi Signed Boot Team")
-```
+**Example:** `rpi-fastbootd_14.0.0~git20260319.4b6c09f_arm64.deb`
 
 ### Installation
 
 ```bash
-# Install package
-sudo dpkg -i dist/rpi-fastbootd_14.0.0-247_arm64.deb
-
-# Or during development
-sudo cmake --build build --target install
+sudo dpkg -i ../rpi-fastbootd_*_arm64.deb
 ```
 
 **Install location:** `/usr/bin/fastbootd`
@@ -395,24 +375,13 @@ For network-based provisioning (useful for debugging or when USB isn't available
 ```bash
 # On Raspberry Pi - start in TCP mode
 sudo fastbootd -i tcp
-
-# Or edit systemd service to use TCP
-sudo systemctl edit fastbootd.service
-# Add: Environment="FASTBOOT_MODE=tcp"
-
-# Fastbootd listens on port 5554
 ```
 
-**Connecting from host:**
-```bash
-# Host computer - connect to device IP
-fastboot -s tcp:192.168.1.100:5554 devices
-fastboot -s tcp:192.168.1.100:5554 getvar product
+Fastbootd listens on port 5554. The fastboot client defaults to this port, so no port is needed on the host:
 
-# Or for repeated commands, use environment variable
-export FASTBOOT_DEVICE=tcp:192.168.1.100:5554
-fastboot devices
-fastboot oem idpinit
+```bash
+fastboot -s tcp:192.168.1.100 devices
+fastboot -s tcp:192.168.1.100 getvar product
 ```
 
 ### Systemd Service
@@ -459,7 +428,7 @@ sudo systemctl stop fastbootd.service
 | Method | Use Case | Command |
 |--------|----------|---------|
 | **USB** | Production, secure boot | `fastboot devices` |
-| **TCP/IP** | Development, debugging, network provisioning | `fastboot -s tcp:IP:5554 devices` |
+| **TCP/IP** | Development, debugging, network provisioning | `fastboot -s tcp:IP devices` |
 
 ### Verifying Connection
 
@@ -541,11 +510,11 @@ STR_INTERFACE_="my-device" sudo fastbootd
 sudo systemctl edit fastbootd.service
 ```
 
-Add:
+To switch to TCP mode or set a custom USB interface string, add an `ExecStart` override:
 ```ini
 [Service]
-Environment="FASTBOOT_MODE=tcp"
-Environment="STR_INTERFACE_=custom-device"
+ExecStart=
+ExecStart=/usr/bin/fastbootd -i tcp
 ```
 
 **Persistent storage location:**

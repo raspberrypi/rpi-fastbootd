@@ -18,9 +18,8 @@ USB Mode (Default):
   (On host) fastboot devices
 
 TCP/IP Mode (Port 5554):
-  sudo systemctl edit fastbootd.service
-  Add: Environment="FASTBOOT_MODE=tcp"
-  (On host) fastboot -s tcp:IP:5554 devices
+  sudo fastbootd -i tcp
+  (On host) fastboot -s tcp:IP devices
 
 Licensing:
 ----------
@@ -38,13 +37,14 @@ To build without libcryptsetup (Apache 2.0 only):
 Version Numbering:
 ------------------
 
-Package versions follow: 14.0.0-<git-commit-count>
+Package versions follow: 14.0.0~git<YYYYMMDD>.<hash>
 
 Where:
   14.0.0         = Android 14 baseline version
-  commit-count   = Number of commits since baseline (auto-calculated)
+  YYYYMMDD       = Commit date
+  hash           = 7-character git hash (auto-calculated by debian/gen-version.sh)
 
-Example: rpi-fastbootd_14.0.0-247_arm64.deb
+Example: rpi-fastbootd_14.0.0~git20260319.4b6c09f_arm64.deb
 
 Building from Source:
 ---------------------
