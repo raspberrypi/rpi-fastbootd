@@ -174,17 +174,20 @@ This fastbootd adds the following OEM commands beyond standard AOSP:
 
 ## Building
 
+> **Raspberry Pi OS only.** This project depends on `librpifwcrypto`, a library that interfaces with Raspberry Pi firmware cryptography services. That library is only available in the Raspberry Pi OS apt repository and is not packaged for generic Debian/Ubuntu. The build must run on a Raspberry Pi running Raspberry Pi OS (Trixie or later, arm64).
+
 ### Prerequisites
 
-**On the build machine (can be the Raspberry Pi or cross-compile host):**
+**On the Raspberry Pi:**
 
 ```bash
-# Debian/Ubuntu (arm64)
+# Raspberry Pi OS (arm64)
 sudo apt-get install \
     build-essential cmake git \
     android-liblog-dev android-libbase-dev android-libcutils-dev \
     android-libsparse-dev libfdisk-dev liburing-dev libsystemd-dev \
-    zlib1g-dev libgpiod-dev libcryptsetup-dev libssl-dev
+    zlib1g-dev libgpiod-dev libcryptsetup-dev libssl-dev \
+    librpifwcrypto-dev
 ```
 
 **On your host computer (for running fastboot commands):**
@@ -202,9 +205,11 @@ brew install android-platform-tools
 
 ### Quick Build
 
+Run on the Raspberry Pi:
+
 ```bash
-git clone https://github.com/raspberrypi/android_platform_system_core
-cd android_platform_system_core
+git clone https://github.com/raspberrypi/rpi-fastbootd
+cd rpi-fastbootd
 cmake -B build -S .
 cmake --build build -j$(nproc)
 ```

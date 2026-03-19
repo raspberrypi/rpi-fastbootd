@@ -42,7 +42,7 @@ Per GPL terms, dynamically linking GPL libraries causes the entire binary to be 
 ### Default Build (GPL-2+/GPL-3+)
 
 ```bash
-cd /path/to/android_platform_system_core
+cd /path/to/rpi-fastbootd
 ./build-package.sh
 ```
 
@@ -54,7 +54,7 @@ This produces a binary that:
 ### Apache-Only Build (Apache 2.0)
 
 ```bash
-cd /path/to/android_platform_system_core
+cd /path/to/rpi-fastbootd
 DEB_BUILD_OPTIONS="nocryptsetup" ./build-package.sh
 ```
 
