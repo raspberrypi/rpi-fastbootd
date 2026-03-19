@@ -290,6 +290,7 @@ static std::string getDeviceId(const std::string& block_device) {
 static std::string executeCommand(const std::string& command) {
     FILE* pipe = popen(command.c_str(), "r");
     if (!pipe) {
+        PLOG(WARNING) << "popen failed for command: " << command;
         return "";
     }
     
