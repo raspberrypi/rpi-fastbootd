@@ -35,16 +35,12 @@ Depends: ${shlibs:Depends}, ${misc:Depends},
          libgpiod3,
          libcryptsetup12,
          openssl,
-         coreutils,
          xxd,
-         sed,
-         awk,
          raspi-utils-core,
          kpartx,
          librpifwcrypto0
 Suggests: net-tools,
           iproute2,
-          util-linux,
           gpiod,
           cryptsetup-bin
 Description: Raspberry Pi Fastboot Device Daemon

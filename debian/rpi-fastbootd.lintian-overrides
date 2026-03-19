@@ -2,3 +2,10 @@
 # With libcryptsetup: GPL-2+/GPL-3+ (due to libcryptsetup linkage)
 # Without libcryptsetup: Apache-2.0
 rpi-fastbootd: possible-gpl-code-linked-with-openssl
+
+# jsoncpp is intentionally bundled via CMake FetchContent — no Debian package
+# for the version we require is available in Trixie.
+rpi-fastbootd: embedded-library libjsoncpp [usr/bin/fastbootd]
+
+# No man page exists for fastbootd upstream; this is a device-side daemon.
+rpi-fastbootd: no-manual-page [usr/bin/fastbootd]
