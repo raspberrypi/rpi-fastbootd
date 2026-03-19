@@ -13,3 +13,5 @@ debian/changelog
 obj-aarch64-linux-gnu
 
 LICENSE_BUILD_INFO
+
+rpi-fastbootd-build-deps*
