@@ -80,8 +80,16 @@ static constexpr bool kEnableFetch = false;
 
 #define KEYFILE "/data/fastboot.key"
 
-// using android::fs_mgr::MetadataBuilder;
-// using android::hal::CommandResult;
+// RAII wrapper ensuring a temporary file is always removed even if an early
+// return unwinds the stack before an explicit std::remove call.
+struct TempFile {
+    const std::string path;
+    explicit TempFile(std::string p) : path(std::move(p)) {}
+    ~TempFile() { std::remove(path.c_str()); }
+    TempFile(const TempFile&) = delete;
+    TempFile& operator=(const TempFile&) = delete;
+};
+
 // using ::android::hardware::hidl_string;
 // using android::snapshot::SnapshotManager;
 // using MergeStatus = android::hal::BootControlClient::MergeStatus;
@@ -662,8 +670,8 @@ namespace {
         LOG(WARNING) << "libcryptsetup failed: " << error_msg << ", falling back to command";
 #endif
 
-        std::string temp_keyfile = "/tmp/luks_key.tmp";
-        std::ofstream keyfile_stream(temp_keyfile);
+        TempFile keyfile_guard{"/tmp/luks_key.tmp"};
+        std::ofstream keyfile_stream(keyfile_guard.path);
         if (!keyfile_stream) {
             return device->WriteFail("Cannot create temporary keyfile");
         }
@@ -688,14 +696,12 @@ namespace {
             force_password,
             const_cast<char *>(block_device.c_str()),
             (char*)"--key-file",
-            const_cast<char *>(temp_keyfile.c_str()),
+            const_cast<char *>(keyfile_guard.path.c_str()),
             NULL
         };
 
         int subprocess_rc = -1;
         int ret = rpi::process_spawn_blocking(&subprocess_rc, "cryptsetup", argv, NULL);
-
-        std::remove(temp_keyfile.c_str());
 
         if (ret) {
             return device->WriteFail(strerror(ret));
@@ -742,8 +748,8 @@ namespace {
         LOG(WARNING) << "libcryptsetup failed: " << error_msg << ", falling back to command";
 #endif
 
-        std::string temp_keyfile = "/tmp/luks_key_open.tmp";
-        std::ofstream keyfile_stream(temp_keyfile);
+        TempFile keyfile_guard{"/tmp/luks_key_open.tmp"};
+        std::ofstream keyfile_stream(keyfile_guard.path);
         if (!keyfile_stream) {
             return device->WriteFail("Cannot create temporary keyfile");
         }
@@ -757,7 +763,7 @@ namespace {
             cryptsetup,
             luksOpen,
             (char*)"--key-file",
-            const_cast<char *>(temp_keyfile.c_str()),
+            const_cast<char *>(keyfile_guard.path.c_str()),
             const_cast<char *>(block_device_path.c_str()),
             const_cast<char *>(mapped_name.c_str()),
             NULL
@@ -765,8 +771,6 @@ namespace {
 
         int subprocess_rc = -1;
         int ret = rpi::process_spawn_blocking(&subprocess_rc, "cryptsetup", argv, NULL);
-
-        std::remove(temp_keyfile.c_str());
 
         if (ret) {
             return device->WriteFail(strerror(ret));
@@ -808,8 +812,8 @@ static bool oem_cmd_cryptsetpassword(FastbootDevice* device, const std::vector<s
     LOG(WARNING) << "libcryptsetup failed: " << error_msg << ", falling back to command";
 #endif
 
-    std::string temp_hw_keyfile = "/tmp/luks_hw_key.tmp";
-    std::ofstream hw_keyfile_stream(temp_hw_keyfile);
+    TempFile hw_keyfile_guard{"/tmp/luks_hw_key.tmp"};
+    std::ofstream hw_keyfile_stream(hw_keyfile_guard.path);
     if (!hw_keyfile_stream) {
         return device->WriteFail("Cannot create temporary hardware keyfile");
     }
@@ -821,22 +825,20 @@ static bool oem_cmd_cryptsetpassword(FastbootDevice* device, const std::vector<s
         char luksKillSlot[] = "luksKillSlot";
         char * const argv[] = {
             cryptsetup, luksKillSlot, (char*)"--key-file",
-            const_cast<char *>(temp_hw_keyfile.c_str()),
+            const_cast<char *>(hw_keyfile_guard.path.c_str()),
             const_cast<char *>(block_device.c_str()), (char*)"1", NULL
         };
         int subprocess_rc = -1;
         int ret = rpi::process_spawn_blocking(&subprocess_rc, "cryptsetup", argv, NULL);
-        std::remove(temp_hw_keyfile.c_str());
         if (ret != 0 || subprocess_rc != 0) {
             return device->WriteFail("Failed to remove user passphrase");
         }
         return device->WriteOkay("User passphrase removed.");
     }
 
-    std::string temp_user_keyfile = "/tmp/luks_user_key.tmp";
-    std::ofstream user_keyfile_stream(temp_user_keyfile);
+    TempFile user_keyfile_guard{"/tmp/luks_user_key.tmp"};
+    std::ofstream user_keyfile_stream(user_keyfile_guard.path);
     if (!user_keyfile_stream) {
-        std::remove(temp_hw_keyfile.c_str());
         return device->WriteFail("Cannot create temporary user keyfile");
     }
     user_keyfile_stream << user_passphrase;
@@ -846,7 +848,7 @@ static bool oem_cmd_cryptsetpassword(FastbootDevice* device, const std::vector<s
     char luksKillSlot[] = "luksKillSlot";
     char * const kill_argv[] = {
         cryptsetup_kill, luksKillSlot, (char*)"--key-file",
-        const_cast<char *>(temp_hw_keyfile.c_str()),
+        const_cast<char *>(hw_keyfile_guard.path.c_str()),
         const_cast<char *>(block_device.c_str()), (char*)"1", NULL
     };
     int kill_subprocess_rc = -1;
@@ -856,16 +858,13 @@ static bool oem_cmd_cryptsetpassword(FastbootDevice* device, const std::vector<s
     char luksAddKey[] = "luksAddKey";
     char * const argv[] = {
         cryptsetup, luksAddKey, (char*)"--key-file",
-        const_cast<char *>(temp_hw_keyfile.c_str()), (char*)"--key-slot", (char*)"1",
+        const_cast<char *>(hw_keyfile_guard.path.c_str()), (char*)"--key-slot", (char*)"1",
         const_cast<char *>(block_device.c_str()),
-        const_cast<char *>(temp_user_keyfile.c_str()), NULL
+        const_cast<char *>(user_keyfile_guard.path.c_str()), NULL
     };
 
     int subprocess_rc = -1;
     int ret = rpi::process_spawn_blocking(&subprocess_rc, "cryptsetup", argv, NULL);
-
-    std::remove(temp_hw_keyfile.c_str());
-    std::remove(temp_user_keyfile.c_str());
 
     if (ret != 0 || subprocess_rc != 0) {
         return device->WriteFail("Failed to set user passphrase");
