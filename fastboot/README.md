@@ -178,18 +178,6 @@ This fastbootd adds the following OEM commands beyond standard AOSP:
 
 ### Prerequisites
 
-**On the Raspberry Pi:**
-
-```bash
-# Raspberry Pi OS (arm64)
-sudo apt-get install \
-    build-essential cmake git \
-    android-liblog-dev android-libbase-dev android-libcutils-dev \
-    android-libsparse-dev libfdisk-dev liburing-dev libsystemd-dev \
-    zlib1g-dev libgpiod-dev libcryptsetup-dev libssl-dev \
-    librpifwcrypto-dev
-```
-
 **On your host computer (for running fastboot commands):**
 
 ```bash
