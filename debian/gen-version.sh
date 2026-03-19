@@ -9,7 +9,7 @@ TEMPLATE="${SCRIPT_DIR}/changelog.template"
 OUTPUT="${SCRIPT_DIR}/changelog"
 
 # Android 14 baseline commit
-BASELINE_COMMIT="2bdf18c51"
+BASELINE_COMMIT="45cfa6160"
 
 # Package metadata
 PACKAGE_NAME="rpi-fastbootd"
@@ -18,7 +18,7 @@ MAINTAINER="Raspberry Pi Signed Boot Team <applications@raspberrypi.com>"
 
 # Get total commit count for version
 GIT_COMMITS=$(git rev-list --count ${BASELINE_COMMIT}^..HEAD 2>/dev/null || echo "0")
-VERSION="14.0.0-${GIT_COMMITS}"
+VERSION="14.0.0+${GIT_COMMITS}"
 
 echo "Generating debian/changelog with version ${VERSION}..."
 
@@ -31,7 +31,7 @@ mapfile -t COMMITS < <(git rev-list ${BASELINE_COMMIT}^..HEAD 2>/dev/null || tru
 # Generate entry for each commit (newest first)
 REVISION=${GIT_COMMITS}
 for commit in "${COMMITS[@]}"; do
-    COMMIT_VERSION="14.0.0-${REVISION}"
+    COMMIT_VERSION="14.0.0+${REVISION}"
     COMMIT_DATE=$(git show -s --format=%aD "${commit}")
     COMMIT_SUBJECT=$(git show -s --format=%s "${commit}")
     COMMIT_BODY=$(git show -s --format=%b "${commit}" | sed 's/^/  /')
