@@ -1,11 +1,5 @@
 #!/usr/bin/make -f
 
-# Get git-based revision number for version
-# Format: 14.0.0-<git-commit-count>
-BASELINE_COMMIT := 2bdf18c51
-GIT_REVISION := $(shell git rev-list --count $(BASELINE_COMMIT)^..HEAD 2>/dev/null || echo "0")
-export DEB_VERSION := 14.0.0-$(GIT_REVISION)
-
 # Preserve cmake-based build system
 export DH_VERBOSE = 1
 
@@ -16,7 +10,6 @@ export DEB_BUILD_OPTIONS += network
 # Generate changelog before any build steps
 .PHONY: generate-changelog
 generate-changelog:
-	@echo "Generating debian/changelog with version $(DEB_VERSION)"
 	@debian/gen-version.sh
 
 %:
