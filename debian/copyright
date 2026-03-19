@@ -1,7 +1,7 @@
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: rpi-fastbootd
 Upstream-Contact: Raspberry Pi Signed Boot Team <applications@raspberrypi.com>
-Source: https://github.com/raspberrypi/android_platform_system_core
+Source: https://github.com/raspberrypi/rpi-fastbootd
 
 Files: *
 Copyright: 2018-2025 The Android Open Source Project
