@@ -19,9 +19,7 @@
 #ifdef WITH_FASTBOOT
 #include "device/commands.h"
 #include "device/fastboot_device.h"
-
-// Fastboot specifics can be added here
-
+#include "device/utility.h"
 #endif
 
 
@@ -429,6 +427,17 @@ bool IDPdevice::validateProvisioningIntent() const
 
 bool IDPdevice::checkFirmwareCryptoStatus() const
 {
+#ifdef WITH_FASTBOOT
+   // Use the rpifwcrypto library directly (linked into fastbootd)
+   rpi::RpiFwCrypto crypto;
+   std::vector<uint8_t> test_msg = {0};
+   auto result = crypto.CalculateHmac(test_msg);
+   if (!result.has_value()) {
+      ERR("Failed to perform HMAC test with firmware crypto: status " << static_cast<int>(result.error()));
+      return false;
+   }
+   return true;
+#else
    // Directly test HMAC capability with firmware crypto key slot 1
    // Using /dev/null as input and output to verify we can perform HMAC operations
    std::vector<std::string> args = {
@@ -450,6 +459,7 @@ bool IDPdevice::checkFirmwareCryptoStatus() const
 
    // If we get here, HMAC operations are working with key slot 1
    return true;
+#endif
 }
 
 

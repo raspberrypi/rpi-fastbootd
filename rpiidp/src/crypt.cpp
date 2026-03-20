@@ -16,6 +16,10 @@
 #include "idpcrypt.h"
 #include "utility.h"
 
+#ifdef WITH_FASTBOOT
+#include "device/utility.h"
+#endif
+
 // Exception thrown when secure keyfile generation fails
 class SecureKeyfileError : public std::runtime_error {
 public:
@@ -266,14 +270,34 @@ SecureKeyfile::SecureKeyfile(std::string_view blkdev)
       throw SecureKeyfileError("USB devices not supported for LUKS encryption");
    }
 
-   // Create a unique temporary filename for the device ID
+   // Create a unique temporary filename for the keyfile
    std::string blkdev_str(blkdev);
    std::replace(blkdev_str.begin(), blkdev_str.end(), '/', '_');
 
-   std::filesystem::path device_id_file = "/tmp/idp_device_id_" + blkdev_str + ".tmp";
    std::filesystem::path keyfile = "/tmp/idp_key_" + blkdev_str + ".tmp";
 
+#ifdef WITH_FASTBOOT
+   // Use rpifwcrypto library directly (linked into fastbootd)
+   rpi::RpiFwCrypto crypto;
+   std::vector<uint8_t> message(device_id.begin(), device_id.end());
+   auto hmac_result = crypto.CalculateHmac(message);
+   if (!hmac_result.has_value()) {
+      throw SecureKeyfileError("Firmware crypto HMAC failed: status " +
+         std::to_string(static_cast<int>(hmac_result.error())));
+   }
+
+   // Write hex HMAC to keyfile (CalculateHmac returns lowercase hex string)
+   std::ofstream key_file(keyfile, std::ios::out | std::ios::trunc);
+   if (!key_file) {
+      throw SecureKeyfileError("Could not create keyfile: " + keyfile.string());
+   }
+   key_file << hmac_result.value().substr(0, 64);
+   key_file.close();
+#else
+   // Fallback to CLI tool for non-fastboot builds
+
    // Write device ID to temporary file
+   std::filesystem::path device_id_file = "/tmp/idp_device_id_" + blkdev_str + ".tmp";
    std::ofstream id_file(device_id_file);
    if (!id_file) {
       throw SecureKeyfileError("Could not create device ID file: " + device_id_file.string());
@@ -340,6 +364,7 @@ SecureKeyfile::SecureKeyfile(std::string_view blkdev)
    if (truncate(keyfile.c_str(), 64) != 0) {
       throw SecureKeyfileError("Could not truncate keyfile to remove trailing newline: " + keyfile.string());
    }
+#endif
 
    // Success - store the keyfile path
    path_ = keyfile;
