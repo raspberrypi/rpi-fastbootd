@@ -114,6 +114,38 @@ target_include_directories(verity_test PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/..
 )
 
+# Firmware crypto (librpifwcrypto) tests via RpiFwCrypto C++ wrapper
+# Link the pre-built utility.cpp.o from the fastbootd target to avoid
+# re-compiling utility.cpp (which drags in the full transport stack).
+set(UTILITY_OBJ $<TARGET_OBJECTS:fastbootd>)
+add_executable(fwcrypto_test fwcrypto_test.cpp)
+
+# Ensure fastbootd is built first so utility.cpp.o exists
+add_dependencies(fwcrypto_test fastbootd)
+
+target_link_directories(fwcrypto_test PRIVATE "/usr/lib/aarch64-linux-gnu/android")
+
+# utility.cpp.o must appear before the libraries it depends on
+target_link_options(fwcrypto_test PRIVATE
+    ${CMAKE_BINARY_DIR}/fastboot/CMakeFiles/fastbootd.dir/device/utility.cpp.o
+)
+target_link_libraries(fwcrypto_test PRIVATE
+    Catch2::Catch2WithMain
+    ${RPIFWCRYPTO_LIBRARIES}
+    OpenSSL::Crypto
+    base
+    log
+)
+
+set_property(TARGET fwcrypto_test PROPERTY CXX_STANDARD 23)
+set_property(TARGET fwcrypto_test PROPERTY CXX_STANDARD_REQUIRED ON)
+
+target_include_directories(fwcrypto_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/..
+    /usr/include/android
+    ${RPIFWCRYPTO_INCLUDE_DIRS}
+)
+
 # Add test to CTest (try catch_discover_tests if available, else manual)
 if(EXISTS "${catch2_SOURCE_DIR}/contrib/Catch.cmake")
     list(APPEND CMAKE_MODULE_PATH ${catch2_SOURCE_DIR}/contrib)
@@ -153,8 +185,13 @@ add_test(NAME verity_native COMMAND verity_test "[verity][native]")
 add_test(NAME verity_activate COMMAND verity_test "[verity][activate]")
 add_test(NAME verity_integration COMMAND verity_test "[verity][integration]")
 
+add_test(NAME fwcrypto_all_tests COMMAND fwcrypto_test)
+add_test(NAME fwcrypto_status COMMAND fwcrypto_test "[status]")
+add_test(NAME fwcrypto_hmac COMMAND fwcrypto_test "[hmac]")
+add_test(NAME fwcrypto_pubkey COMMAND fwcrypto_test "[pubkey]")
+
 # Installation (optional)
-install(TARGETS kernel_log_test gpio_test gateway_test crypto_test verity_test
+install(TARGETS kernel_log_test gpio_test gateway_test crypto_test verity_test fwcrypto_test
         RUNTIME DESTINATION tests
 )
 
@@ -165,6 +202,7 @@ message(STATUS "  - gpio_test: libgpiod library")
 message(STATUS "  - gateway_test: /proc gateway parsing")
 message(STATUS "  - crypto_test: libcryptsetup LUKS operations")
 message(STATUS "  - verity_test: dm-verity hash tree generation")
+message(STATUS "  - fwcrypto_test: librpifwcrypto firmware crypto operations")
 message(STATUS "  - Run tests with: ctest --test-dir build/fastboot/device/test")
 message(STATUS "  - Or directly: build/fastboot/device/test/<test_name>")
 message(STATUS "  - For verbose output: <test> -s")
@@ -176,5 +214,6 @@ message(STATUS "      - gpio_test needs GPIO hardware access")
 message(STATUS "      - gateway_test needs network configuration")
 message(STATUS "      - crypto_test needs root for loopback devices")
 message(STATUS "      - verity_test needs root for loopback devices")
+message(STATUS "      - fwcrypto_test needs /dev/vcio (firmware mailbox)")
 message(STATUS "      Run as root for full test coverage: sudo ctest")
 
