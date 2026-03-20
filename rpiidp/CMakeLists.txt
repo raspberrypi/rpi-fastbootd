@@ -47,8 +47,10 @@ if(IDP_FASTBOOT)
    # C++23 required for std::expected used by RpiFwCrypto wrapper
    set_property(TARGET rpiidp PROPERTY CXX_STANDARD 23)
    set_property(TARGET rpiidp PROPERTY CXX_STANDARD_REQUIRED ON)
+   find_package(rpifwcrypto REQUIRED)
    target_include_directories(rpiidp PRIVATE /usr/include/android ${CMAKE_SOURCE_DIR}/fastboot)
    target_include_directories(rpiidp PRIVATE ${CMAKE_SOURCE_DIR}/rpiparted/include)
+   target_link_libraries(rpiidp PUBLIC ${RPIFWCRYPTO_LIBRARIES})
 else()
    add_subdirectory(../rpiparted rpiparted)
 endif()
@@ -60,7 +62,7 @@ target_include_directories(rpiidp PUBLIC
    ${JSONCPP_INCLUDE_DIRS}
 )
 
-if (IDP_TESTS)
+if (IDP_TESTS AND NOT IDP_FASTBOOT)
    set(JSONCPP_INCLUDE_DIR ${JSONCPP_INCLUDE_DIRS} CACHE INTERNAL "")
    add_subdirectory(test)
 endif()
