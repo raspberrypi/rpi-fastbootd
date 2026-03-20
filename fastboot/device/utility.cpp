@@ -290,10 +290,28 @@ namespace rpi {
             return std::unexpected(static_cast<RPI_FW_CRYPTO_STATUS>(ret));
         }
 
-        // Check if the key has been provisioned by checking the device private key flag
-        bool is_provisioned = (status & ARM_CRYPTO_KEY_STATUS_TYPE_DEVICE_PRIVATE_KEY) != 0;
+        // The DEVICE flag means the slot is designated as a device key,
+        // but does not guarantee that key material has been written to OTP.
+        if (!(status & ARM_CRYPTO_KEY_STATUS_TYPE_DEVICE_PRIVATE_KEY)) {
+            return false;
+        }
 
-        return is_provisioned;
+        // Verify the key is actually usable by attempting to retrieve the
+        // public key. This fails with KEY_NOT_SET if the OTP is blank.
+        std::vector<uint8_t> pubkey_buf(RPI_FW_CRYPTO_PUBLIC_KEY_MAX_SIZE);
+        size_t pubkey_len = 0;
+        ret = rpi_fw_crypto_get_pubkey(0, ARM_CRYPTO_DEVICE_PRIVATE_KEY_ID,
+                                       pubkey_buf.data(), pubkey_buf.size(), &pubkey_len);
+        if (ret != 0) {
+            auto err = static_cast<RPI_FW_CRYPTO_STATUS>(ret);
+            if (err == RPI_FW_CRYPTO_KEY_NOT_SET) {
+                return false;
+            }
+            LOG(ERROR) << "Failed to verify key: " << rpi_fw_crypto_strerror(err);
+            return std::unexpected(err);
+        }
+
+        return true;
     }
 
     /**
