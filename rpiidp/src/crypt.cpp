@@ -279,6 +279,15 @@ SecureKeyfile::SecureKeyfile(std::string_view blkdev)
 #ifdef WITH_FASTBOOT
    // Use rpifwcrypto library directly (linked into fastbootd)
    rpi::RpiFwCrypto crypto;
+   auto status = crypto.GetCachedProvisioningStatus();
+   if (!status.has_value()) {
+      throw SecureKeyfileError("Failed to query firmware crypto status: " +
+         std::to_string(static_cast<int>(status.error())));
+   }
+   if (!*status) {
+      throw SecureKeyfileError("Device key is not provisioned");
+   }
+
    std::vector<uint8_t> message(device_id.begin(), device_id.end());
    auto hmac_result = crypto.CalculateHmac(message);
    if (!hmac_result.has_value()) {

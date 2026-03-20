@@ -430,6 +430,16 @@ bool IDPdevice::checkFirmwareCryptoStatus() const
 #ifdef WITH_FASTBOOT
    // Use the rpifwcrypto library directly (linked into fastbootd)
    rpi::RpiFwCrypto crypto;
+   auto status = crypto.GetCachedProvisioningStatus();
+   if (!status.has_value()) {
+      ERR("Failed to query firmware crypto status: " << static_cast<int>(status.error()));
+      return false;
+   }
+   if (!*status) {
+      ERR("Device key is not provisioned");
+      return false;
+   }
+
    std::vector<uint8_t> test_msg = {0};
    auto result = crypto.CalculateHmac(test_msg);
    if (!result.has_value()) {
