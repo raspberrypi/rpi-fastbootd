@@ -44,6 +44,9 @@ add_library(rpiidp STATIC
 
 if(IDP_FASTBOOT)
    target_compile_definitions(rpiidp PRIVATE WITH_FASTBOOT)
+   # C++23 required for std::expected used by RpiFwCrypto wrapper
+   set_property(TARGET rpiidp PROPERTY CXX_STANDARD 23)
+   set_property(TARGET rpiidp PROPERTY CXX_STANDARD_REQUIRED ON)
    target_include_directories(rpiidp PRIVATE /usr/include/android ${CMAKE_SOURCE_DIR}/fastboot)
    target_include_directories(rpiidp PRIVATE ${CMAKE_SOURCE_DIR}/rpiparted/include)
 else()
