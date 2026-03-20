@@ -95,6 +95,10 @@ echo "      (Downloads jsoncpp v1.9.6 for static linking)"
 echo
 dpkg-buildpackage -b ${UNSIGNED} -j$(nproc)
 
+# Remove build dependency metapackage installed by mk-build-deps
+echo "Removing build dependency metapackage..."
+sudo --non-interactive dpkg --purge rpi-fastbootd-build-deps 2>/dev/null || true
+
 # Show results
 echo
 echo "========================================"
