@@ -40,6 +40,9 @@
 #include <string>
 #include <vector>
 
+// librpifwcrypto
+#include <rpifwcrypto.h>
+
 // Helper: can we talk to the firmware mailbox?
 static bool is_firmware_accessible() {
     rpi::RpiFwCrypto crypto;
@@ -50,6 +53,7 @@ static bool is_firmware_accessible() {
 // Helper: is the device key provisioned?
 static bool is_key_provisioned() {
     rpi::RpiFwCrypto crypto;
+
     auto status = crypto.GetCachedProvisioningStatus();
     return status.has_value() && *status;
 }
