@@ -20,6 +20,10 @@
 #include "device/utility.h"
 #endif
 
+extern "C" {
+#include <block_device_id.h>
+}
+
 // Exception thrown when secure keyfile generation fails
 class SecureKeyfileError : public std::runtime_error {
 public:
@@ -199,61 +203,12 @@ bool SecureKeyfile::pathExists(const std::string& path) {
 
 // Get unique device ID from sysfs (based on getDeviceId from commands.cpp)
 std::string SecureKeyfile::getDeviceId(const std::string& block_device) {
-    std::string device = block_device;
-    if (device.find("/dev/") == 0) {
-        device = device.substr(5);
-    }
+    char id[256];
+    int ret;
 
-    // Extract base device name (remove partition)
-    std::string base_device = device;
-    if (device.find("mmcblk") != std::string::npos) {
-        size_t p_pos = device.find("p");
-        if (p_pos != std::string::npos) {
-            base_device = device.substr(0, p_pos);
-        }
-    } else if (device.find("nvme") != std::string::npos) {
-        size_t p_pos = device.find_last_of("p");
-        if (p_pos != std::string::npos) {
-            base_device = device.substr(0, p_pos);
-        }
-    } else {
-        // SATA/SCSI: sda1 -> sda
-        while (!base_device.empty() && std::isdigit(base_device.back())) {
-            base_device.pop_back();
-        }
-    }
-
-    std::string sys_block_path = "/sys/class/block/" + base_device;
-
-    // Try MMC/SD Card CID first
-    std::string device_id = readSysFile(sys_block_path + "/device/cid");
-    if (!device_id.empty()) {
-        return device_id;
-    }
-
-    // Try NVMe EUI
-    device_id = readSysFile(sys_block_path + "/eui");
-    if (!device_id.empty()) {
-        return device_id;
-    }
-
-    // Try device serial
-    device_id = readSysFile(sys_block_path + "/device/serial");
-    if (!device_id.empty()) {
-        return device_id;
-    }
-
-    // Check if this is a USB device - return error
-    if (pathExists(sys_block_path + "/device")) {
-        char resolved_path[PATH_MAX];
-        std::string device_link = sys_block_path + "/device";
-        if (realpath(device_link.c_str(), resolved_path) != nullptr) {
-            std::string device_path = resolved_path;
-            if (device_path.find("/usb") != std::string::npos) {
-                return "ERROR_USB_NOT_SUPPORTED";
-            }
-        }
-    }
+    ret = bdi_get_id(block_device.c_str(), id, sizeof(id));
+    if (!ret)
+        return std::string(id);
 
     return "";
 }

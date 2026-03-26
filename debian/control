@@ -16,6 +16,7 @@ Build-Depends: debhelper-compat (= 13),
                libgpiod-dev,
                libcryptsetup-dev [!nocryptsetup],
                librpifwcrypto-dev,
+               libblockdeviceid-dev,
                git
 Standards-Version: 4.7.2
 Homepage: https://www.raspberrypi.com/
@@ -38,7 +39,8 @@ Depends: ${shlibs:Depends}, ${misc:Depends},
          xxd,
          raspi-utils-core,
          kpartx,
-         librpifwcrypto0
+         librpifwcrypto0,
+         libblockdeviceid1
 Suggests: net-tools,
           iproute2,
           gpiod,

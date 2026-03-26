@@ -24,6 +24,7 @@ pkg_check_modules(FDISK REQUIRED fdisk)
 pkg_check_modules(URING REQUIRED liburing)
 pkg_check_modules(SYSTEMD REQUIRED libsystemd)
 find_package(rpifwcrypto REQUIRED)
+find_package(blockdeviceid REQUIRED)
 
 # GPIO control via libgpiod (optional - falls back to command if not available)
 pkg_check_modules(GPIOD libgpiod)
@@ -101,6 +102,7 @@ target_include_directories(fastbootd PRIVATE
     ${GPIOD_INCLUDE_DIRS}
     ${CRYPTSETUP_INCLUDE_DIRS}
     ${RPIFWCRYPTO_INCLUDE_DIRS}
+    ${BLOCKDEVICEID_INCLUDE_DIRS}
     ${CMAKE_CURRENT_LIST_DIR}/../rpiparted/include
 )
 
@@ -114,6 +116,7 @@ target_link_libraries(fastbootd PRIVATE
     ${GPIOD_LIBRARIES}
     ${CRYPTSETUP_LIBRARIES}
     ${RPIFWCRYPTO_LIBRARIES}
+    ${BLOCKDEVICEID_LIBRARIES}
     OpenSSL::Crypto
     asyncio
     cutils
