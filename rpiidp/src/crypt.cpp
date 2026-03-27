@@ -20,6 +20,10 @@
 #include "device/utility.h"
 #endif
 
+#ifdef HAVE_LIBCRYPTSETUP
+#include "device/crypto_native.h"
+#endif
+
 // Exception thrown when secure keyfile generation fails
 class SecureKeyfileError : public std::runtime_error {
 public:
@@ -66,6 +70,12 @@ private:
     static std::string getDeviceId(const std::string& block_device);
     static std::string readSysFile(const std::string& path);
     static bool pathExists(const std::string& path);
+
+public:
+    // Read keyfile content (used by native crypto APIs)
+    static std::string readKeyfileContent(const std::filesystem::path& path) {
+        return readSysFile(path.string());
+    }
 };
 
 // Define to redirect cryptsetup stdout to sdterr
@@ -140,7 +150,25 @@ bool IDPluks::Create(std::string_view blkdev, std::optional<std::string> userkey
    try {
       SecureKeyfile keyfile(blkdev);
       // RAII ensures keyfile is automatically cleaned up when it goes out of scope
+
+#ifdef HAVE_LIBCRYPTSETUP
+      std::string key_data = SecureKeyfile::readKeyfileContent(keyfile.path());
+      if (key_data.empty()) {
+         ERR("Failed to read keyfile content");
+         return false;
+      }
+
+      std::string error_msg;
+      std::string lbl = (label && !label->empty()) ? *label : "";
+      if (!CryptInitNative(std::string(blkdev), lbl, cipher, key_data, &error_msg)) {
+         ERR(error_msg);
+         return false;
+      }
+      return true;
+#else
       return cryptsetup::run(luks2createcmd(blkdev, keyfile.path()), "create");
+#endif
+
    } catch (const SecureKeyfileError& e) {
       ERR("Failed to generate secure keyfile: " << e.what());
       return false;
@@ -160,7 +188,24 @@ bool IDPluks::Open(std::string_view blkdev) const
    try {
       SecureKeyfile keyfile(blkdev);
       // RAII ensures keyfile is automatically cleaned up when it goes out of scope
+
+#ifdef HAVE_LIBCRYPTSETUP
+      std::string key_data = SecureKeyfile::readKeyfileContent(keyfile.path());
+      if (key_data.empty()) {
+         ERR("Failed to read keyfile content");
+         return false;
+      }
+
+      std::string error_msg;
+      if (!CryptOpenNative(std::string(blkdev), mname, key_data, &error_msg)) {
+         ERR(error_msg);
+         return false;
+      }
+      return true;
+#else
       return cryptsetup::run(luks2opencmd(blkdev, keyfile.path()), "open");
+#endif
+
    } catch (const SecureKeyfileError& e) {
       ERR("Failed to generate secure keyfile: " << e.what());
       return false;
@@ -173,7 +218,16 @@ bool IDPluks::Close(std::optional<std::string_view> blkdev) const
    std::string_view dev = blkdev.value_or(mname);
    std::string msg = ("Closing " + std::string(dev)); MSG(msg);
 
+#ifdef HAVE_LIBCRYPTSETUP
+   std::string error_msg;
+   if (!CryptCloseNative(std::string(dev), &error_msg)) {
+      ERR(error_msg);
+      return false;
+   }
+   return true;
+#else
    return cryptsetup::run(luks2closecmd(dev), "close");
+#endif
 }
 
 

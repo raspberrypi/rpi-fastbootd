@@ -82,6 +82,15 @@ bool CryptOpenNative(const std::string& device_path, const std::string& mapped_n
     return true;
 }
 
+bool CryptCloseNative(const std::string& mapped_name, std::string* error_msg) {
+    int r = crypt_deactivate(NULL, mapped_name.c_str());
+    if (r < 0) {
+        *error_msg = "Failed to deactivate device: " + std::string(strerror(-r));
+        return false;
+    }
+    return true;
+}
+
 bool CryptSetPasswordNative(const std::string& device_path, const std::string& hw_key,
                            const std::string& user_passphrase, bool remove_passphrase,
                            std::string* error_msg) {
