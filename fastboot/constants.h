@@ -110,6 +110,8 @@
 #define FB_VAR_IPV4_DNS "ipv4-dns"
 #define FB_VAR_IPV4_DHCP "ipv4-dhcp"
 
+#define FB_VAR_VERSION_FASTBOOTD "version-fastbootd"
+
 #define FB_VAR_IPV6_ADDRESS "ipv6-address"
 #define FB_VAR_IPV6_GATEWAY "ipv6-gateway"
 #define FB_VAR_IPV6_NETMASK "ipv6-netmask"

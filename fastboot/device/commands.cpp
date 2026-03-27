@@ -134,6 +134,7 @@ static void GetAllVars(FastbootDevice* device, const std::string& name,
 const std::unordered_map<std::string, VariableHandlers> kVariableMap = {
         {FB_VAR_VERSION, {GetVersion, nullptr}},
         {FB_VAR_VERSION_BOOTLOADER, {GetBootloaderVersion, nullptr}},
+        {FB_VAR_VERSION_FASTBOOTD, {GetFastbootdVersion, nullptr}},
         // {FB_VAR_VERSION_BASEBAND, {GetBasebandVersion, nullptr}},
         // {FB_VAR_VERSION_OS, {GetOsVersion, nullptr}},
         // {FB_VAR_VERSION_VNDK, {GetVndkVersion, nullptr}},
