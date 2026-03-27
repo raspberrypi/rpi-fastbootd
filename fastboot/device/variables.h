@@ -143,6 +143,7 @@ bool GetIpv6Dhcp(FastbootDevice* /* device */, const std::vector<std::string>& /
 
 // Complex cases.
 bool GetDmesg(FastbootDevice* device);
+bool GetMmcExtCsd(FastbootDevice* device);
 
 bool GetPubkey(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
     std::string* message);

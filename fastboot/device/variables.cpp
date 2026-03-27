@@ -37,6 +37,10 @@
 // Kernel log access via klogctl() (Linux syscall)
 #include <sys/klog.h>
 
+// MMC ext_csd access via ioctl
+#include <linux/mmc/ioctl.h>
+#include <sys/ioctl.h>
+
 #include "fastboot_device.h"
 #include "flashing.h"
 #include "utility.h"
@@ -963,6 +967,42 @@ bool GetMmcSectorCount(FastbootDevice * /* device */, const std::vector<std::str
     android::base::ReadFileToString("/sys/block/mmcblk0/size", &total_sectors);
     *message = total_sectors;
     return true;
+}
+
+bool GetMmcExtCsd(FastbootDevice* device) {
+    int fd = open("/dev/mmcblk0", O_RDONLY);
+    if (fd < 0) {
+        return device->WriteFail("Cannot open /dev/mmcblk0: " + std::string(strerror(errno)));
+    }
+
+    uint8_t ext_csd[512] = {};
+    struct mmc_ioc_cmd cmd = {};
+    cmd.write_flag = 0;
+    cmd.opcode = 8;  // MMC_SEND_EXT_CSD
+    cmd.arg = 0;
+    cmd.flags = MMC_RSP_SPI_R1 | MMC_RSP_R1 | MMC_CMD_ADTC;
+    cmd.blksz = 512;
+    cmd.blocks = 1;
+    mmc_ioc_cmd_set_data(cmd, ext_csd);
+
+    if (ioctl(fd, MMC_IOC_CMD, &cmd) < 0) {
+        close(fd);
+        return device->WriteFail("MMC_SEND_EXT_CSD failed: " + std::string(strerror(errno)));
+    }
+    close(fd);
+
+    // Send ext_csd as hex, 64 chars (32 bytes) per INFO line
+    for (int offset = 0; offset < 512; offset += 32) {
+        std::string line = android::base::StringPrintf("[%03d] ", offset);
+        for (int i = 0; i < 32 && (offset + i) < 512; i++) {
+            line += android::base::StringPrintf("%02x", ext_csd[offset + i]);
+        }
+        if (!device->WriteInfo(line)) {
+            return false;
+        }
+    }
+
+    return device->WriteOkay("");
 }
 
 bool GetSignedEeprom(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
