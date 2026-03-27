@@ -114,6 +114,23 @@ target_include_directories(verity_test PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/..
 )
 
+# IDP crypto parameter coverage tests
+add_executable(idp_crypto_test idp_crypto_test.cpp ../crypto_native.cpp)
+
+target_link_libraries(idp_crypto_test PRIVATE Catch2::Catch2WithMain)
+
+target_compile_features(idp_crypto_test PRIVATE cxx_std_17)
+
+if(CRYPTSETUP_FOUND)
+    target_compile_definitions(idp_crypto_test PRIVATE HAVE_LIBCRYPTSETUP)
+    target_link_libraries(idp_crypto_test PRIVATE ${CRYPTSETUP_LIBRARIES})
+    target_include_directories(idp_crypto_test PRIVATE ${CRYPTSETUP_INCLUDE_DIRS})
+endif()
+
+target_include_directories(idp_crypto_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/..
+)
+
 # Firmware crypto (librpifwcrypto) tests via RpiFwCrypto C++ wrapper
 # Link the pre-built utility.cpp.o from the fastbootd target to avoid
 # re-compiling utility.cpp (which drags in the full transport stack).
@@ -181,6 +198,9 @@ add_test(NAME gateway_performance COMMAND gateway_test "[performance]")
 add_test(NAME crypto_luks COMMAND crypto_test "[crypto][luks]")
 add_test(NAME crypto_performance COMMAND crypto_test "[crypto][performance]")
 
+add_test(NAME idp_crypto_all_tests COMMAND idp_crypto_test)
+add_test(NAME idp_crypto_params COMMAND idp_crypto_test "[idp][crypto]")
+
 add_test(NAME verity_native COMMAND verity_test "[verity][native]")
 add_test(NAME verity_activate COMMAND verity_test "[verity][activate]")
 add_test(NAME verity_integration COMMAND verity_test "[verity][integration]")
@@ -191,7 +211,7 @@ add_test(NAME fwcrypto_hmac COMMAND fwcrypto_test "[hmac]")
 add_test(NAME fwcrypto_pubkey COMMAND fwcrypto_test "[pubkey]")
 
 # Installation (optional)
-install(TARGETS kernel_log_test gpio_test gateway_test crypto_test verity_test fwcrypto_test
+install(TARGETS kernel_log_test gpio_test gateway_test crypto_test idp_crypto_test verity_test fwcrypto_test
         RUNTIME DESTINATION tests
 )
 
