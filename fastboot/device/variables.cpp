@@ -970,6 +970,46 @@ bool GetMmcSectorCount(FastbootDevice * /* device */, const std::vector<std::str
 }
 
 bool GetMmcExtCsd(FastbootDevice* device) {
+    // Guard: only eMMC cards (type "MMC") support ext_csd.
+    // SD cards use a different protocol and CMD8 means something else entirely.
+    // Mirrors the kernel's mmc_card_can_ext_csd() check in mmc_ops.c.
+    std::string card_type;
+    if (!android::base::ReadFileToString("/sys/block/mmcblk0/device/type", &card_type)) {
+        return device->WriteFail("Cannot determine card type (no /sys/block/mmcblk0/device/type)");
+    }
+    card_type.erase(card_type.find_last_not_of(" \t\n\r") + 1);
+    if (card_type != "MMC") {
+        return device->WriteFail("ext_csd not supported: card type is " + card_type + " (requires MMC/eMMC)");
+    }
+
+    // Guard: ext_csd requires CSD spec_version > 3 (MMC v4.0+).
+    // The kernel checks card->csd.mmca_vsn > CSD_SPEC_VER_3.
+    // sysfs exposes the raw CSD register; spec_vers is bits [125:122] (top nibble of byte 0).
+    std::string csd_str;
+    if (android::base::ReadFileToString("/sys/block/mmcblk0/device/csd", &csd_str)) {
+        csd_str.erase(csd_str.find_last_not_of(" \t\n\r") + 1);
+        // CSD is a 32-char hex string (128 bits). spec_vers is the top nibble of the first byte.
+        if (csd_str.size() >= 1) {
+            unsigned int first_nibble = 0;
+            if (sscanf(csd_str.c_str(), "%1x", &first_nibble) == 1) {
+                // CSD[127:126] = csd_structure, CSD[125:122] = spec_vers
+                // The first hex char contains csd_structure[1:0] in bits 3:2
+                // and spec_vers[3:2] in bits 1:0. We need the full spec_vers
+                // from the first two hex chars: byte0 = CSD[127:120]
+                // spec_vers = (byte0 >> 2) & 0xF
+                unsigned int byte0 = 0;
+                if (sscanf(csd_str.c_str(), "%2x", &byte0) == 1) {
+                    unsigned int spec_vers = (byte0 >> 2) & 0xF;
+                    if (spec_vers <= 3) {
+                        return device->WriteFail(
+                            "ext_csd not supported: CSD spec_vers=" +
+                            std::to_string(spec_vers) + " (requires > 3 / MMC v4.0+)");
+                    }
+                }
+            }
+        }
+    }
+
     int fd = open("/dev/mmcblk0", O_RDONLY);
     if (fd < 0) {
         return device->WriteFail("Cannot open /dev/mmcblk0: " + std::string(strerror(errno)));
