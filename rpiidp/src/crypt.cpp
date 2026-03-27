@@ -158,9 +158,17 @@ bool IDPluks::Create(std::string_view blkdev, std::optional<std::string> userkey
          return false;
       }
 
+      CryptFormatParams fmt;
+      fmt.cipher = cipher;
+      fmt.hash = hash;
+      fmt.key_size_bits = key_size;
+      fmt.sector_size = sector_size;
+      fmt.label = (label && !label->empty()) ? *label : "";
+      fmt.uuid = uuid;
+      fmt.data_alignment_bytes = pAlignmentBytes;
+
       std::string error_msg;
-      std::string lbl = (label && !label->empty()) ? *label : "";
-      if (!CryptInitNative(std::string(blkdev), lbl, cipher, key_data, &error_msg)) {
+      if (!CryptInitNative(std::string(blkdev), fmt, key_data, &error_msg)) {
          ERR(error_msg);
          return false;
       }
