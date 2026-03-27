@@ -338,6 +338,7 @@ static std::string generateLuksKeyFromPartition(const std::string& block_device)
 const std::unordered_map<std::string, std::function<bool(FastbootDevice*)>> kSpecialVars = {
         {"all", GetVarAll},
         {"dmesg", GetDmesg},
+        {"mmc-extcsd", GetMmcExtCsd},
 };
 
 bool GetVarHandler(FastbootDevice* device, const std::vector<std::string>& args) {
