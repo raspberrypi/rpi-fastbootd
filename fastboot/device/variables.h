@@ -24,6 +24,8 @@ class FastbootDevice;
 bool GetVersion(FastbootDevice* device, const std::vector<std::string>& args, std::string* message);
 bool GetBootloaderVersion(FastbootDevice* device, const std::vector<std::string>& args,
                           std::string* message);
+bool GetFastbootdVersion(FastbootDevice* device, const std::vector<std::string>& args,
+                          std::string* message);
 bool GetBasebandVersion(FastbootDevice* device, const std::vector<std::string>& args,
                         std::string* message);
 bool GetOsVersion(FastbootDevice* device, const std::vector<std::string>& args,

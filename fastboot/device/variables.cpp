@@ -70,6 +70,16 @@ bool GetBootloaderVersion(FastbootDevice* /* device */, const std::vector<std::s
     return true;
 }
 
+bool GetFastbootdVersion(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
+                          std::string* message) {
+#ifdef FASTBOOTD_VERSION
+    *message = FASTBOOTD_VERSION;
+#else
+    *message = "unknown";
+#endif
+    return true;
+}
+
 bool GetBasebandVersion(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
                         std::string* message) {
     *message = android::base::GetProperty("ro.build.expect.baseband", "");

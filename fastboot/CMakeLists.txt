@@ -58,6 +58,25 @@ add_executable(fastbootd ${SOURCES})
 set_property(TARGET fastbootd PROPERTY CXX_STANDARD 23)
 set_property(TARGET fastbootd PROPERTY CXX_STANDARD_REQUIRED ON)
 
+# Get package version from debian/changelog if available
+find_program(DPKG_PARSECHANGELOG dpkg-parsechangelog)
+if(DPKG_PARSECHANGELOG)
+    execute_process(
+        COMMAND dpkg-parsechangelog -l ${CMAKE_SOURCE_DIR}/debian/changelog -S Version
+        OUTPUT_VARIABLE FASTBOOTD_PACKAGE_VERSION
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET
+        RESULT_VARIABLE _dpkg_result
+    )
+    if(NOT _dpkg_result EQUAL 0)
+        set(FASTBOOTD_PACKAGE_VERSION "${PROJECT_VERSION}")
+    endif()
+else()
+    set(FASTBOOTD_PACKAGE_VERSION "${PROJECT_VERSION}")
+endif()
+message(STATUS "fastbootd package version: ${FASTBOOTD_PACKAGE_VERSION}")
+target_compile_definitions(fastbootd PRIVATE FASTBOOTD_VERSION="${FASTBOOTD_PACKAGE_VERSION}")
+
 # Define HAVE_LIBGPIOD if libgpiod is available
 if(GPIOD_FOUND)
     message(STATUS "libgpiod found - enabling native GPIO control")
