@@ -39,6 +39,17 @@
 
 // MMC ext_csd access via ioctl
 #include <linux/mmc/ioctl.h>
+
+// MMC command flags from linux/mmc/core.h (not exported to userspace headers in Debian packaging)
+#ifndef MMC_RSP_PRESENT
+#define MMC_RSP_PRESENT  (1 << 0)
+#define MMC_RSP_CRC      (1 << 2)
+#define MMC_RSP_OPCODE   (1 << 4)
+#define MMC_RSP_R1       (MMC_RSP_PRESENT | MMC_RSP_CRC | MMC_RSP_OPCODE)
+#define MMC_CMD_ADTC     (1 << 5)
+#define MMC_RSP_SPI_S1   (1 << 7)
+#define MMC_RSP_SPI_R1   (MMC_RSP_SPI_S1)
+#endif
 #include <sys/ioctl.h>
 
 #include "fastboot_device.h"
