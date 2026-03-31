@@ -698,7 +698,7 @@ The build system automatically detects which libraries are linked and generates 
 
 - **Upstream AOSP:** https://android.googlesource.com/platform/system/core/+/refs/heads/android14-release/fastboot/
 - **Raspberry Pi Documentation:** https://www.raspberrypi.com/documentation/
-- **rpi-sb-provisioner:** (Internal tool - contact Raspberry Pi for access)
+- **rpi-sb-provisioner:** https://github.com/raspberrypi/rpi-sb-provisioner
 
 ---
 
