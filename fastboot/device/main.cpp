@@ -99,7 +99,7 @@ class ThreadPool {
     }
 
     // Blocks if the queue already has max_queued_ pending tasks.
-    void Enqueue(std::function<void()> task) {
+    void Enqueue(std::move_only_function<void()> task) {
         std::unique_lock<std::mutex> lock(mutex_);
         cv_enqueue_.wait(lock, [this] {
             return stop_ || static_cast<int>(tasks_.size()) < max_queued_;
@@ -112,7 +112,7 @@ class ThreadPool {
   private:
     void WorkerLoop() {
         while (true) {
-            std::function<void()> task;
+            std::move_only_function<void()> task;
             {
                 std::unique_lock<std::mutex> lock(mutex_);
                 cv_workers_.wait(lock, [this] { return stop_ || !tasks_.empty(); });
@@ -127,7 +127,7 @@ class ThreadPool {
 
     const int max_queued_;
     std::vector<std::thread> workers_;
-    std::queue<std::function<void()>> tasks_;
+    std::queue<std::move_only_function<void()>> tasks_;
     std::mutex mutex_;
     std::condition_variable cv_workers_;
     std::condition_variable cv_enqueue_;
