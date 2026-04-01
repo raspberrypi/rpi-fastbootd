@@ -225,6 +225,27 @@ bool GetRevisionMemory(FastbootDevice * /* device */, const std::vector<std::str
             return true;
         }
 
+bool GetSdramSizeBytes(FastbootDevice * /* device */, const std::vector<std::string> & /* args */,
+                       std::string *message)
+{
+    static constexpr const char* kDtPath = "/proc/device-tree/chosen/rpi-sdram-size-gbit";
+    std::ifstream f(kDtPath, std::ios::binary);
+    if (!f) {
+        *message = "";
+        return false;
+    }
+    uint32_t gbit = 0;
+    f.read(reinterpret_cast<char*>(&gbit), sizeof(gbit));
+    if (!f) {
+        *message = "";
+        return false;
+    }
+    gbit = __builtin_bswap32(gbit);
+    uint64_t bytes = static_cast<uint64_t>(gbit) * 1000ULL * 1000ULL * 1000ULL / 8ULL;
+    *message = std::to_string(bytes);
+    return true;
+}
+
 bool GetRevisionType(FastbootDevice * /* device */, const std::vector<std::string> & /* args */,
                      std::string *message)
 {

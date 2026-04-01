@@ -93,6 +93,8 @@ bool GetRevisionProcessor(FastbootDevice* /* device */, const std::vector<std::s
     std::string* message);
 bool GetRevisionMemory(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
     std::string* message);
+bool GetSdramSizeBytes(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
+    std::string* message);
 bool GetRevisionManufacturer(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
     std::string* message);
 bool GetRevisionType(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
