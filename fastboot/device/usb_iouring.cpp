@@ -29,7 +29,7 @@ static int prep_async_read(struct io_uring* ring, int fd, void* data, size_t len
     if (sqe == nullptr) {
         return -1;
     }
-    io_uring_sqe_set_flags(sqe, IOSQE_IO_LINK | IOSQE_ASYNC);
+    io_uring_sqe_set_flags(sqe, IOSQE_ASYNC);
     io_uring_prep_read(sqe, fd, data, len, offset);
     return 0;
 }
@@ -44,7 +44,7 @@ static int prep_async_write(struct io_uring* ring, int fd, const void* data, siz
     if (sqe == nullptr) {
         return -1;
     }
-    io_uring_sqe_set_flags(sqe, IOSQE_IO_LINK | IOSQE_ASYNC);
+    io_uring_sqe_set_flags(sqe, IOSQE_ASYNC);
     io_uring_prep_write(sqe, fd, data, len, offset);
     return 0;
 }
@@ -68,48 +68,81 @@ extern int getMaxPacketSize(int ffs_fd);
 template <bool read, typename T>
 static int usb_ffs_do_aio(usb_handle* h, T* const data, const int len) {
     const aio_block* aiob = read ? &h->read_aiob : &h->write_aiob;
-    const int num_requests = DivRoundup<int>(len, h->io_size);
-    auto cur_data = data;
+    const int total_requests = DivRoundup<int>(len, h->io_size);
     const auto packet_size = getMaxPacketSize(aiob->fd);
 
-    for (int bytes_remain = len; bytes_remain > 0;) {
-        const int buf_len = std::min(bytes_remain, static_cast<int>(h->io_size));
-        const auto ret = prep_async_io<read>(&h->ring, aiob->fd, cur_data, buf_len, 0);
-        if (ret < 0) {
-            PLOG(ERROR) << "Failed to queue io_uring request";
-            return -1;
-        }
-
-        bytes_remain -= buf_len;
-        cur_data = reinterpret_cast<T*>(reinterpret_cast<size_t>(cur_data) + buf_len);
-    }
-    const int ret = io_uring_submit(&h->ring);
-    if (ret <= 0 || ret != num_requests) {
-        PLOG(ERROR) << "io_uring: failed to submit SQE entries to kernel";
-        return -1;
-    }
+    int bytes_queued = 0;
+    int sqes_submitted = 0;
+    int sqes_completed = 0;
     int res = 0;
     bool success = true;
-    for (int i = 0; i < num_requests; ++i) {
+
+    while (sqes_completed < total_requests) {
+        // Fill the submission queue with as many SQEs as ring space allows
+        int newly_queued = 0;
+        while (sqes_submitted < total_requests && io_uring_sq_space_left(&h->ring) > 0) {
+            const int buf_len = std::min(len - bytes_queued, static_cast<int>(h->io_size));
+            auto target = reinterpret_cast<T*>(reinterpret_cast<size_t>(data) + bytes_queued);
+            if (prep_async_io<read>(&h->ring, aiob->fd, target, buf_len, 0) < 0) {
+                PLOG(ERROR) << "Failed to queue io_uring request";
+                return -1;
+            }
+            bytes_queued += buf_len;
+            sqes_submitted++;
+            newly_queued++;
+        }
+
+        if (newly_queued > 0) {
+            const int ret = io_uring_submit(&h->ring);
+            if (ret < 0) {
+                PLOG(ERROR) << "io_uring: failed to submit SQE entries to kernel";
+                return -1;
+            }
+        }
+
+        // Wait for at least one completion
         struct io_uring_cqe* cqe{};
         const auto ret = TEMP_FAILURE_RETRY(io_uring_wait_cqe(&h->ring, &cqe));
         if (ret < 0 || cqe == nullptr) {
             PLOG(ERROR) << "Failed to get CQE from kernel";
             success = false;
+            sqes_completed++;
             continue;
         }
-        res += cqe->res;
         if (cqe->res < 0) {
-            LOG(ERROR) << "io_uring request failed:, i = " << i
-                       << ", num_requests = " << num_requests << ", res = " << cqe->res << ": "
-                       << strerror(cqe->res) << (read ? " read" : " write")
+            LOG(ERROR) << "io_uring request failed: res = " << cqe->res << ": "
+                       << strerror(-cqe->res) << (read ? " read" : " write")
                        << " request size: " << len << ", io_size: " << h->io_size
                        << " max packet size: " << packet_size << ", fd: " << aiob->fd;
             success = false;
             errno = -cqe->res;
+        } else {
+            res += cqe->res;
         }
         io_uring_cqe_seen(&h->ring, cqe);
+        sqes_completed++;
+
+        // Drain any additional ready CQEs without blocking
+        while (sqes_completed < total_requests) {
+            cqe = nullptr;
+            if (io_uring_peek_cqe(&h->ring, &cqe) != 0 || cqe == nullptr) {
+                break;
+            }
+            if (cqe->res < 0) {
+                LOG(ERROR) << "io_uring request failed: res = " << cqe->res << ": "
+                           << strerror(-cqe->res) << (read ? " read" : " write")
+                           << " request size: " << len << ", io_size: " << h->io_size
+                           << " max packet size: " << packet_size << ", fd: " << aiob->fd;
+                success = false;
+                errno = -cqe->res;
+            } else {
+                res += cqe->res;
+            }
+            io_uring_cqe_seen(&h->ring, cqe);
+            sqes_completed++;
+        }
     }
+
     if (!success) {
         return -1;
     }
