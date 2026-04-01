@@ -35,6 +35,7 @@ std::unordered_map<std::string, CommandHandler> FastbootDevice::BuildCommandMap(
     return {
               {FB_CMD_SET_ACTIVE, SetActiveHandler},
               {FB_CMD_DOWNLOAD, DownloadHandler},
+              {"stage", DownloadHandler},  // Compat: older rpi-imager sends "stage:" on the wire
               {FB_CMD_UPLOAD, UploadHandler},
               {FB_CMD_GETVAR, GetVarHandler},
               {FB_CMD_SHUTDOWN, ShutDownHandler},
