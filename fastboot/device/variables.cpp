@@ -18,6 +18,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <dirent.h>
 #include <fstream>
 #include <sstream>
 #include <inttypes.h>
@@ -978,6 +979,133 @@ bool GetMmcSectorCount(FastbootDevice * /* device */, const std::vector<std::str
     android::base::ReadFileToString("/sys/block/mmcblk0/size", &total_sectors);
     *message = total_sectors;
     return true;
+}
+
+// Enumerate physical block devices from /sys/block/, filtering out
+// virtual devices (loop, ram, dm-, zram) and MMC sub-devices (boot, rpmb).
+static std::vector<std::string> EnumerateBlockDevices() {
+    std::vector<std::string> devices;
+    DIR* dir = opendir("/sys/block");
+    if (!dir) return devices;
+
+    struct dirent* entry;
+    while ((entry = readdir(dir)) != nullptr) {
+        std::string name(entry->d_name);
+        if (name == "." || name == "..") continue;
+
+        if (name.find("mmcblk") == 0) {
+            // Only keep whole-disk mmcblk devices (digits only after prefix).
+            // Excludes mmcblk0boot0, mmcblk0rpmb, etc.
+            std::string suffix = name.substr(6);
+            if (suffix.empty() || suffix.find_first_not_of("0123456789") != std::string::npos) {
+                continue;
+            }
+        } else if (name.find("nvme") == 0) {
+            // Include NVMe namespaces (nvme0n1, etc.)
+        } else if (name.length() >= 3 && name[0] == 's' && name[1] == 'd' && std::isalpha(name[2])) {
+            // Include SCSI/USB mass storage (sda, sdb, etc.)
+        } else {
+            // Skip loop, ram, dm-, zram, and other virtual devices
+            continue;
+        }
+
+        devices.push_back(name);
+    }
+    closedir(dir);
+
+    std::sort(devices.begin(), devices.end());
+    return devices;
+}
+
+// Determine the transport type of a block device from sysfs.
+static std::string ClassifyBlockDevice(const std::string& name) {
+    if (name.find("mmcblk") == 0) {
+        std::string type;
+        if (android::base::ReadFileToString("/sys/block/" + name + "/device/type", &type)) {
+            type.erase(type.find_last_not_of(" \t\n\r") + 1);
+            if (type == "MMC") return "emmc";
+            if (type == "SD") return "sd";
+        }
+        return "mmc";
+    }
+
+    if (name.find("nvme") == 0) {
+        return "nvme";
+    }
+
+    if (name.find("sd") == 0) {
+        // Resolve the device symlink and check if the path traverses a USB controller.
+        char linkbuf[PATH_MAX];
+        std::string devpath = "/sys/block/" + name;
+        ssize_t len = readlink(devpath.c_str(), linkbuf, sizeof(linkbuf) - 1);
+        if (len > 0) {
+            linkbuf[len] = '\0';
+            if (std::string(linkbuf).find("usb") != std::string::npos) {
+                return "usb";
+            }
+        }
+        return "scsi";
+    }
+
+    return "unknown";
+}
+
+bool GetBlockDevices(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
+                     std::string* message) {
+    auto devices = EnumerateBlockDevices();
+    std::string result;
+    for (size_t i = 0; i < devices.size(); i++) {
+        if (i > 0) result += ",";
+        result += devices[i];
+    }
+    *message = result;
+    return true;
+}
+
+bool GetBlockDeviceSize(FastbootDevice* /* device */, const std::vector<std::string>& args,
+                        std::string* message) {
+    if (args.empty()) {
+        *message = "Missing device name";
+        return false;
+    }
+    const std::string& name = args[0];
+    if (name.find('/') != std::string::npos || name.find("..") != std::string::npos) {
+        *message = "Invalid device name";
+        return false;
+    }
+
+    std::string size_str;
+    if (!android::base::ReadFileToString("/sys/block/" + name + "/size", &size_str)) {
+        *message = "Cannot read device size";
+        return false;
+    }
+    // /sys/block/*/size is always in 512-byte sectors
+    uint64_t sectors = std::stoull(android::base::Trim(size_str));
+    *message = std::to_string(sectors * 512);
+    return true;
+}
+
+bool GetBlockDeviceType(FastbootDevice* /* device */, const std::vector<std::string>& args,
+                        std::string* message) {
+    if (args.empty()) {
+        *message = "Missing device name";
+        return false;
+    }
+    const std::string& name = args[0];
+    if (name.find('/') != std::string::npos || name.find("..") != std::string::npos) {
+        *message = "Invalid device name";
+        return false;
+    }
+    *message = ClassifyBlockDevice(name);
+    return true;
+}
+
+std::vector<std::vector<std::string>> GetAllBlockDeviceArgs(FastbootDevice* /* device */) {
+    std::vector<std::vector<std::string>> result;
+    for (const auto& dev : EnumerateBlockDevices()) {
+        result.push_back({dev});
+    }
+    return result;
 }
 
 bool GetMmcExtCsd(FastbootDevice* device) {

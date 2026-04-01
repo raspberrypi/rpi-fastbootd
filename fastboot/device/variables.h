@@ -150,6 +150,15 @@ bool GetPubkey(FastbootDevice* /* device */, const std::vector<std::string>& /* 
 bool GetPrivkey(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
     std::string* message);
 
+// Block device enumeration
+bool GetBlockDevices(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
+    std::string* message);
+bool GetBlockDeviceSize(FastbootDevice* /* device */, const std::vector<std::string>& args,
+    std::string* message);
+bool GetBlockDeviceType(FastbootDevice* /* device */, const std::vector<std::string>& args,
+    std::string* message);
+
 // Helpers for getvar all.
 std::vector<std::vector<std::string>> GetAllPartitionArgsWithSlot(FastbootDevice* device);
 std::vector<std::vector<std::string>> GetAllPartitionArgsNoSlot(FastbootDevice* device);
+std::vector<std::vector<std::string>> GetAllBlockDeviceArgs(FastbootDevice* device);

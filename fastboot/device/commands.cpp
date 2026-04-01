@@ -195,7 +195,9 @@ const std::unordered_map<std::string, VariableHandlers> kVariableMap = {
         {FB_VAR_IPV6_NETMASK, {GetIpv6Netmask, nullptr}},
         {FB_VAR_IPV6_DNS, {GetIpv6Dns, nullptr}},
         {FB_VAR_IPV6_DHCP, {GetIpv6Dhcp, nullptr}},
-        
+        {FB_VAR_BLOCK_DEVICES, {GetBlockDevices, nullptr}},
+        {FB_VAR_BLOCK_DEVICE_SIZE, {GetBlockDeviceSize, GetAllBlockDeviceArgs}},
+        {FB_VAR_BLOCK_DEVICE_TYPE, {GetBlockDeviceType, GetAllBlockDeviceArgs}},
 };
 
 static bool GetVarAll(FastbootDevice* device) {
