@@ -84,6 +84,7 @@
 #define FB_VAR_PUBKEY "public-key"
 #define FB_VAR_PRIVKEY "private-key"
 #define FB_VAR_REV_MEMORY "revision-memory"
+#define FB_VAR_SDRAM_SIZE_BYTES "sdram-size-bytes"
 #define FB_VAR_REV_MANUFACTURER "revision-manufacturer"
 #define FB_VAR_REV_PROCESSOR "revision-processor"
 #define FB_VAR_REV_TYPE "revision-type"

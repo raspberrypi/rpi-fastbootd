@@ -171,6 +171,7 @@ const std::unordered_map<std::string, VariableHandlers> kVariableMap = {
         {FB_VAR_PUBKEY, {GetPubkey, nullptr}},
         {FB_VAR_REV_MANUFACTURER, {GetRevisionManufacturer, nullptr}},
         {FB_VAR_REV_MEMORY, {GetRevisionMemory, nullptr}},
+        {FB_VAR_SDRAM_SIZE_BYTES, {GetSdramSizeBytes, nullptr}},
         {FB_VAR_REV_PROCESSOR, {GetRevisionProcessor, nullptr}},
         {FB_VAR_REV_TYPE, {GetRevisionType, nullptr}},
         {FB_VAR_REV_REVISION, {GetRevisionRevision, nullptr}},
