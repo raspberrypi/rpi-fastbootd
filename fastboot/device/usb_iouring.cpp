@@ -29,7 +29,9 @@ static int prep_async_read(struct io_uring* ring, int fd, void* data, size_t len
     if (sqe == nullptr) {
         return -1;
     }
-    io_uring_sqe_set_flags(sqe, IOSQE_ASYNC);
+    // IO_HARDLINK preserves sequential ordering for FunctionFS bulk reads
+    // without cancelling the chain on short reads (unlike IO_LINK).
+    io_uring_sqe_set_flags(sqe, IOSQE_IO_HARDLINK);
     io_uring_prep_read(sqe, fd, data, len, offset);
     return 0;
 }
@@ -65,6 +67,17 @@ static constexpr T DivRoundup(T x, T y) {
 
 extern int getMaxPacketSize(int ffs_fd);
 
+// Drain all in-flight CQEs from the ring (used for cleanup on error paths).
+static void drain_inflight_cqes(struct io_uring* ring, int count) {
+    for (int i = 0; i < count; ++i) {
+        struct io_uring_cqe* cqe{};
+        if (TEMP_FAILURE_RETRY(io_uring_wait_cqe(ring, &cqe)) < 0 || cqe == nullptr) {
+            break;
+        }
+        io_uring_cqe_seen(ring, cqe);
+    }
+}
+
 template <bool read, typename T>
 static int usb_ffs_do_aio(usb_handle* h, T* const data, const int len) {
     const aio_block* aiob = read ? &h->read_aiob : &h->write_aiob;
@@ -77,37 +90,58 @@ static int usb_ffs_do_aio(usb_handle* h, T* const data, const int len) {
     int res = 0;
     bool success = true;
 
+    // in_flight is derived, not accumulated, to avoid drift from partial submits.
+    auto in_flight = [&]() { return sqes_submitted - sqes_completed; };
+
     while (sqes_completed < total_requests) {
-        // Fill the submission queue with as many SQEs as ring space allows
-        int newly_queued = 0;
-        while (sqes_submitted < total_requests && io_uring_sq_space_left(&h->ring) > 0) {
-            const int buf_len = std::min(len - bytes_queued, static_cast<int>(h->io_size));
-            auto target = reinterpret_cast<T*>(reinterpret_cast<size_t>(data) + bytes_queued);
-            if (prep_async_io<read>(&h->ring, aiob->fd, target, buf_len, 0) < 0) {
-                PLOG(ERROR) << "Failed to queue io_uring request";
-                return -1;
+        // Stop submitting new work after a failure; just drain what's in flight.
+        if (success) {
+            int newly_queued = 0;
+            while (sqes_submitted < total_requests && io_uring_sq_space_left(&h->ring) > 0) {
+                const int buf_len = std::min(len - bytes_queued, static_cast<int>(h->io_size));
+                auto target = reinterpret_cast<T*>(reinterpret_cast<size_t>(data) + bytes_queued);
+                if (prep_async_io<read>(&h->ring, aiob->fd, target, buf_len, 0) < 0) {
+                    PLOG(ERROR) << "Failed to queue io_uring request";
+                    // If nothing was ever submitted, we can return immediately.
+                    if (in_flight() == 0) return -1;
+                    // Otherwise stop submitting and drain what's in flight.
+                    success = false;
+                    break;
+                }
+                bytes_queued += buf_len;
+                sqes_submitted++;
+                newly_queued++;
             }
-            bytes_queued += buf_len;
-            sqes_submitted++;
-            newly_queued++;
+
+            if (newly_queued > 0) {
+                const int ret = io_uring_submit(&h->ring);
+                if (ret < 0) {
+                    PLOG(ERROR) << "io_uring: failed to submit SQE entries to kernel";
+                    if (in_flight() == 0) return -1;
+                    success = false;
+                } else if (ret == 0 && in_flight() == 0) {
+                    // SQEs prepared but none submitted and nothing in flight — would hang.
+                    LOG(ERROR) << "io_uring: submit returned 0 with no in-flight requests";
+                    return -1;
+                }
+                // Note: ret may be less than newly_queued (partial submit). The
+                // un-submitted SQEs remain in the SQ and will be submitted on the
+                // next io_uring_submit call. sqes_submitted already reflects all
+                // prepared SQEs, which is correct since the kernel will eventually
+                // submit and complete them all.
+            }
         }
 
-        if (newly_queued > 0) {
-            const int ret = io_uring_submit(&h->ring);
-            if (ret < 0) {
-                PLOG(ERROR) << "io_uring: failed to submit SQE entries to kernel";
-                return -1;
-            }
-        }
+        // If nothing is in flight (all drained or never submitted), we're done.
+        if (in_flight() <= 0) break;
 
         // Wait for at least one completion
         struct io_uring_cqe* cqe{};
         const auto ret = TEMP_FAILURE_RETRY(io_uring_wait_cqe(&h->ring, &cqe));
         if (ret < 0 || cqe == nullptr) {
             PLOG(ERROR) << "Failed to get CQE from kernel";
-            success = false;
-            sqes_completed++;
-            continue;
+            // Ring may be broken — cannot drain further safely.
+            return -1;
         }
         if (cqe->res < 0) {
             LOG(ERROR) << "io_uring request failed: res = " << cqe->res << ": "
@@ -123,7 +157,7 @@ static int usb_ffs_do_aio(usb_handle* h, T* const data, const int len) {
         sqes_completed++;
 
         // Drain any additional ready CQEs without blocking
-        while (sqes_completed < total_requests) {
+        while (in_flight() > 0) {
             cqe = nullptr;
             if (io_uring_peek_cqe(&h->ring, &cqe) != 0 || cqe == nullptr) {
                 break;

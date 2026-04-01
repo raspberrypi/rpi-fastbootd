@@ -257,7 +257,7 @@ ssize_t ClientUsbTransport::Read(void* data, size_t len) {
         LOG(ERROR) << "ClientUsbTransport: no handle";
         return -1;
     }
-    if (len > SSIZE_MAX) {
+    if (len > static_cast<size_t>(INT_MAX)) {
         LOG(ERROR) << "ClientUsbTransport: maximum length exceeds bounds";
         return -1;
     }
@@ -293,7 +293,7 @@ ssize_t ClientUsbTransport::Read(void* data, size_t len) {
 }
 
 ssize_t ClientUsbTransport::Write(const void* data, size_t len) {
-    if (handle_ == nullptr || len > SSIZE_MAX) {
+    if (handle_ == nullptr || len > static_cast<size_t>(INT_MAX)) {
         return -1;
     }
 
