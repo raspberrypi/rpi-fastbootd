@@ -28,9 +28,13 @@
 
 #include "idpdevice.h"
 
+class SharedIDPContext;
+
 class FastbootDevice {
   public:
     FastbootDevice(const char* mode="usb");
+    explicit FastbootDevice(std::unique_ptr<Transport> transport,
+                            std::shared_ptr<SharedIDPContext> shared_idp = nullptr);
     ~FastbootDevice();
 
     void CloseDevice();
@@ -50,10 +54,16 @@ class FastbootDevice {
 
     void set_active_slot(const std::string& active_slot) { active_slot_ = active_slot; }
 
-    IDPdevice * idp = nullptr;
+    std::unique_ptr<IDPdevice> idp;
     IDPdevice::CookiePtr idpcookie{nullptr, IDPcookieDeleter};
 
+    // Non-null when running in multi-connection TCP mode.
+    // Commands should prefer shared_idp over per-device idp when set.
+    std::shared_ptr<SharedIDPContext> shared_idp;
+
   private:
+    static std::unordered_map<std::string, CommandHandler> BuildCommandMap();
+
     const std::unordered_map<std::string, CommandHandler> kCommandMap;
 
     std::unique_ptr<Transport> transport_;

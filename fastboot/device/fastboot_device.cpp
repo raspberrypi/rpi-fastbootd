@@ -31,8 +31,8 @@ using std::string_literals::operator""s;
 
 namespace sph = std::placeholders;
 
-FastbootDevice::FastbootDevice(const char* mode)
-    : kCommandMap({
+std::unordered_map<std::string, CommandHandler> FastbootDevice::BuildCommandMap() {
+    return {
               {FB_CMD_SET_ACTIVE, SetActiveHandler},
               {FB_CMD_DOWNLOAD, DownloadHandler},
               {FB_CMD_UPLOAD, UploadHandler},
@@ -46,7 +46,11 @@ FastbootDevice::FastbootDevice(const char* mode)
               {FB_CMD_FLASH, FlashHandler},
               {FB_CMD_OEM, OemCmdHandler},
               {FB_CMD_FETCH, FetchHandler},
-      }),
+    };
+}
+
+FastbootDevice::FastbootDevice(const char* mode)
+    : kCommandMap(BuildCommandMap()),
       active_slot_("") {
     std::string modestr = mode;
     if (modestr.find("tcp") != std::string::npos) {
@@ -55,6 +59,13 @@ FastbootDevice::FastbootDevice(const char* mode)
         transport_ = std::make_unique<ClientUsbTransport>();
     }
 }
+
+FastbootDevice::FastbootDevice(std::unique_ptr<Transport> transport,
+                               std::shared_ptr<SharedIDPContext> shared_idp_ctx)
+    : kCommandMap(BuildCommandMap()),
+      shared_idp(std::move(shared_idp_ctx)),
+      transport_(std::move(transport)),
+      active_slot_("") {}
 
 FastbootDevice::~FastbootDevice() {
     CloseDevice();

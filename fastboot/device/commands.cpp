@@ -45,6 +45,7 @@
 #include "constants.h"
 #include "fastboot_device.h"
 #include "flashing.h"
+#include "shared_idp.h"
 #include "utility.h"
 #include "storage_literals.h"
 #include "rpiparted.h"
@@ -514,17 +515,28 @@ namespace {
           return device->WriteFail("IDP:No data. Check description was staged");
        }
 
+       // Shared context (multi-connection TCP mode)
+       if (device->shared_idp) {
+          if (!device->shared_idp->Initialize(ptr_data, size)) {
+             return device->WriteFail("IDP:already initialised or invalid description");
+          }
+          return device->WriteOkay("IDP:ready");
+       }
+
+       // Per-device IDP (USB / legacy TCP)
        if (device->idp) {
           return device->WriteFail("IDP:already initialised");
        }
 
-       device->idp = new IDPdevice();
+       device->idp = std::make_unique<IDPdevice>();
 
        if (!device->idp->Initialise(ptr_data, size)) {
+          device->idp.reset();
           return device->WriteFail("IDP:invalid description");
        }
 
        if (!device->idp->canProvision()) {
+          device->idp.reset();
           return device->WriteFail("IDP:cannot provision");
        }
 
@@ -535,6 +547,14 @@ namespace {
 
     // oem idpwrite
     static bool oem_cmd_idp_write(FastbootDevice* device, const std::vector<std::string>& unused) {
+
+       // Shared context (multi-connection TCP mode)
+       if (device->shared_idp) {
+          if (!device->shared_idp->StartProvision()) {
+             return device->WriteFail("IDP:failed to start provisioning");
+          }
+          return device->WriteOkay("IDP:ok");
+       }
 
        if (!device->idp) {
           return device->WriteFail("IDP:not initialised");
@@ -549,11 +569,18 @@ namespace {
 
     // oem idpgetblk
     static bool oem_cmd_idp_getblk(FastbootDevice* device, const std::vector<std::string>& unused) {
-       if (!device->idp) {
-          return device->WriteFail("IDP:not initialised");
+       std::optional<IDPblockDevice> bd;
+
+       // Shared context: thread-safe partition claiming
+       if (device->shared_idp) {
+          bd = device->shared_idp->ClaimNextPartition();
+       } else {
+          if (!device->idp) {
+             return device->WriteFail("IDP:not initialised");
+          }
+          bd = device->idp->getNextBlockDevice(*device->idpcookie);
        }
 
-       auto bd = device->idp->getNextBlockDevice(*device->idpcookie);
        if (bd) {
           std::string blk = bd->blockDev;
           const std::string prefix = "/dev/";
@@ -569,14 +596,20 @@ namespace {
 
     // oem idpdone
     static bool oem_cmd_idp_done(FastbootDevice* device, const std::vector<std::string>& unused) {
+       // Shared context (multi-connection TCP mode)
+       if (device->shared_idp) {
+          if (!device->shared_idp->EndProvision()) {
+             return device->WriteFail("IDP:error finalising");
+          }
+          return device->WriteOkay("IDP:done");
+       }
+
        if (!device->idp) {
           return device->WriteOkay("IDP:not initialised");
        }
 
        bool result = device->idp->endProvision();
-
-       delete device->idp;
-       device->idp = nullptr;
+       device->idp.reset();
 
        if (result) {
           return device->WriteOkay("IDP:done");

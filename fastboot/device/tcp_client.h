@@ -22,13 +22,25 @@
 
 class ClientTcpTransport : public Transport {
   public:
+    // Legacy single-connection mode (creates server, accepts one client at a time).
     ClientTcpTransport();
+
+    // Multi-connection mode (takes a pre-connected, post-handshake socket).
+    explicit ClientTcpTransport(std::unique_ptr<Socket> socket);
+
     ~ClientTcpTransport() override = default;
 
     ssize_t Read(void* data, size_t len) override;
     ssize_t Write(const void* data, size_t len) override;
     int Close() override;
     int Reset() override;
+
+    // Create a TCP server socket bound to the default fastboot port.
+    static std::unique_ptr<Socket> CreateServer();
+
+    // Accept a connection and perform the fastboot TCP handshake.
+    // Returns a connected, handshake-complete socket, or nullptr on failure.
+    static std::unique_ptr<Socket> AcceptHandshake(Socket* service);
 
   private:
     void ListenFastbootSocket();

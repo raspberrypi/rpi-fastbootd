@@ -52,6 +52,46 @@ ClientTcpTransport::ClientTcpTransport() {
     // android::base::SetProperty("sys.usb.ffs.ready", "1");
 }
 
+ClientTcpTransport::ClientTcpTransport(std::unique_ptr<Socket> socket)
+    : socket_(std::move(socket)) {}
+
+std::unique_ptr<Socket> ClientTcpTransport::CreateServer() {
+    return Socket::NewServer(Socket::Protocol::kTcp, kDefaultPort);
+}
+
+std::unique_ptr<Socket> ClientTcpTransport::AcceptHandshake(Socket* service) {
+    auto socket = service->Accept();
+    if (!socket) return nullptr;
+
+    char buffer[kHandshakeLength + 1];
+    buffer[kHandshakeLength] = '\0';
+    if (socket->ReceiveAll(buffer, kHandshakeLength, kHandshakeTimeoutMs) !=
+        static_cast<ssize_t>(kHandshakeLength)) {
+        PLOG(ERROR) << "No Handshake message received";
+        return nullptr;
+    }
+
+    if (memcmp(buffer, "FB", 2) != 0) {
+        PLOG(ERROR) << "Unrecognized initialization message";
+        return nullptr;
+    }
+
+    int version = 0;
+    if (!android::base::ParseInt(buffer + 2, &version) || version < kProtocolVersion) {
+        LOG(ERROR) << "Unknown TCP protocol version " << buffer + 2
+                   << ", our version: " << kProtocolVersion;
+        return nullptr;
+    }
+
+    std::string handshake_message(android::base::StringPrintf("FB%02d", kProtocolVersion));
+    if (!socket->Send(handshake_message.c_str(), kHandshakeLength)) {
+        PLOG(ERROR) << "Failed to send initialization message";
+        return nullptr;
+    }
+
+    return socket;
+}
+
 ssize_t ClientTcpTransport::Read(void* data, size_t len) {
     if (len > SSIZE_MAX) {
         return -1;
@@ -62,6 +102,10 @@ ssize_t ClientTcpTransport::Read(void* data, size_t len) {
         // Read a new message
         while (message_bytes_left_ == 0) {
             if (socket_ == nullptr) {
+                if (!service_) {
+                    // Pre-connected socket disconnected; no server to re-accept from.
+                    return -1;
+                }
                 ListenFastbootSocket();
             }
 
