@@ -1417,10 +1417,10 @@ ssize_t bulk_write(int bulk_in, const char *buf, size_t length)
                 "verified %u ranges ok", range_count));
     }
 
-    // oem fwcrypto <status|init>
+    // oem fwcrypto <status|init|sign-hash>
     static bool oem_cmd_fwcrypto(FastbootDevice* device, const std::vector<std::string>& args) {
         if (args.size() < 3) {
-            return device->WriteFail("Usage: oem fwcrypto <status|init>");
+            return device->WriteFail("Usage: oem fwcrypto <status|init|sign-hash>");
         }
 
         std::string subcommand = args[2];
@@ -1456,8 +1456,64 @@ ssize_t bulk_write(int bulk_in, const char *buf, size_t length)
             } else {
                 return device->WriteFail("Failed to provision key");
             }
+        } else if (subcommand == "sign-hash") {
+            // Sign a pre-computed SHA-256 digest with the device's ECDSA key.
+            // Used by rpi-sb-provisioner for Connect device identity registration.
+            //
+            // The host computes SHA-256 of the payload and passes the 64-char hex
+            // digest.  The device performs raw ECDSA signing via rpi-fw-crypto and
+            // returns the base64-encoded signature as an INFO line.
+            if (args.size() < 4) {
+                return device->WriteFail(
+                    "Usage: oem fwcrypto sign-hash <64-char-hex-sha256-digest>");
+            }
+
+            // Verify key is provisioned
+            auto status = crypto.GetCachedProvisioningStatus();
+            if (!status || !*status) {
+                return device->WriteFail("No firmware crypto key provisioned");
+            }
+
+            const std::string& hex_digest = args[3];
+            if (hex_digest.length() != 64) {
+                return device->WriteFail(
+                    "Digest must be exactly 64 hex characters (SHA-256)");
+            }
+
+            // Decode hex string to 32-byte hash
+            uint8_t hash[32];
+            for (size_t i = 0; i < 32; i++) {
+                unsigned int byte_val;
+                if (sscanf(hex_digest.c_str() + i * 2, "%2x", &byte_val) != 1) {
+                    return device->WriteFail("Invalid hex character in digest");
+                }
+                hash[i] = static_cast<uint8_t>(byte_val);
+            }
+
+            // ECDSA sign the hash with the device's firmware crypto key (key ID 1)
+            uint8_t sig[RPI_FW_CRYPTO_ECDSA_RESP_MAX_SIZE];
+            size_t sig_len = 0;
+
+            int ret = rpi_fw_crypto_ecdsa_sign(
+                0, 1, hash, sizeof(hash),
+                sig, sizeof(sig), &sig_len);
+
+            if (ret != 0) {
+                return device->WriteFail(
+                    std::string("ECDSA sign failed: ") +
+                    rpi_fw_crypto_strerror(static_cast<RPI_FW_CRYPTO_STATUS>(ret)));
+            }
+
+            // Base64-encode the DER-encoded ECDSA signature
+            std::vector<unsigned char> b64_buf(4 * ((sig_len + 2) / 3) + 1);
+            int b64_len = EVP_EncodeBlock(b64_buf.data(), sig, static_cast<int>(sig_len));
+            std::string b64_sig(reinterpret_cast<char*>(b64_buf.data()), b64_len);
+
+            // Return signature via INFO so the host can reliably capture it
+            device->WriteInfo("connect-signature:" + b64_sig);
+            return device->WriteOkay("");
         } else {
-            return device->WriteFail("Unknown fwcrypto subcommand. Use 'status' or 'init'");
+            return device->WriteFail("Unknown fwcrypto subcommand. Use 'status', 'init', or 'sign-hash'");
         }
     }
 } //namespace anonymous
