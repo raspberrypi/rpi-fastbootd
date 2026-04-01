@@ -35,8 +35,8 @@ constexpr int kMaxPacketSizeFs = 64;
 constexpr int kMaxPacketSizeHs = 512;
 constexpr int kMaxPacketsizeSs = 1024;
 
-constexpr size_t kFbFfsNumBufs = 16;
-constexpr size_t kFbFfsBufSize = 16384;
+constexpr size_t kFbFfsNumBufs = 64;
+constexpr size_t kFbFfsBufSize = 65536;
 
 constexpr const char* kUsbFfsFastbootEp0 = "/dev/usb-ffs/fastboot/ep0";
 constexpr const char* kUsbFfsFastbootOut = "/dev/usb-ffs/fastboot/ep1";
@@ -261,6 +261,18 @@ ssize_t ClientUsbTransport::Read(void* data, size_t len) {
         LOG(ERROR) << "ClientUsbTransport: maximum length exceeds bounds";
         return -1;
     }
+
+    // io_uring sliding window handles arbitrary lengths without chunking
+    if (handle_->aio_type == AIOType::IO_URING) {
+        auto bytes_read = handle_->read(handle_.get(), data, len, true /* allow_partial */);
+        if (bytes_read < 0) {
+            PLOG(ERROR) << "ClientUsbTransport: read failed";
+            return -1;
+        }
+        return bytes_read;
+    }
+
+    // AIO/sync: chunk to fit within buffer slot count
     char* char_data = static_cast<char*>(data);
     size_t bytes_read_total = 0;
     while (bytes_read_total < len) {
@@ -284,6 +296,17 @@ ssize_t ClientUsbTransport::Write(const void* data, size_t len) {
     if (handle_ == nullptr || len > SSIZE_MAX) {
         return -1;
     }
+
+    // io_uring sliding window handles arbitrary lengths without chunking
+    if (handle_->aio_type == AIOType::IO_URING) {
+        auto bytes_written = handle_->write(handle_.get(), data, len);
+        if (bytes_written < 0) {
+            return -1;
+        }
+        return bytes_written;
+    }
+
+    // AIO/sync: chunk to fit within buffer slot count
     const char* char_data = reinterpret_cast<const char*>(data);
     size_t bytes_written_total = 0;
     while (bytes_written_total < len) {
