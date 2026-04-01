@@ -118,5 +118,7 @@
 #define FB_VAR_IPV6_DNS "ipv6-dns"
 #define FB_VAR_IPV6_DHCP "ipv6-dhcp"
 
-
+#define FB_VAR_BLOCK_DEVICES "block-devices"
+#define FB_VAR_BLOCK_DEVICE_SIZE "block-device-size"
+#define FB_VAR_BLOCK_DEVICE_TYPE "block-device-type"
 
