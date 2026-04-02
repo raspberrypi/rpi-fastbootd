@@ -46,7 +46,7 @@ static int prep_async_write(struct io_uring* ring, int fd, const void* data, siz
     if (sqe == nullptr) {
         return -1;
     }
-    io_uring_sqe_set_flags(sqe, IOSQE_ASYNC);
+    io_uring_sqe_set_flags(sqe, IOSQE_IO_HARDLINK);
     io_uring_prep_write(sqe, fd, data, len, offset);
     return 0;
 }
@@ -94,8 +94,13 @@ static int usb_ffs_do_aio(usb_handle* h, T* const data, const int len) {
     auto in_flight = [&]() { return sqes_submitted - sqes_completed; };
 
     while (sqes_completed < total_requests) {
-        // Stop submitting new work after a failure; just drain what's in flight.
-        if (success) {
+        // Only submit a new batch once the previous batch has fully drained.
+        // IO_HARDLINK chains guarantee ordering *within* a single
+        // io_uring_submit(), but NOT across calls.  Submitting new SQEs while
+        // earlier chain members are still in-flight creates an independent
+        // chain whose reads/writes can race on the same FunctionFS endpoint,
+        // corrupting the byte stream.
+        if (success && in_flight() == 0) {
             int newly_queued = 0;
             while (sqes_submitted < total_requests && io_uring_sq_space_left(&h->ring) > 0) {
                 const int buf_len = std::min(len - bytes_queued, static_cast<int>(h->io_size));
