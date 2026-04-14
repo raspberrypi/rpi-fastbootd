@@ -26,7 +26,7 @@ pkg_check_modules(SYSTEMD REQUIRED libsystemd)
 find_package(rpifwcrypto REQUIRED)
 
 # GPIO control via libgpiod (optional - falls back to command if not available)
-pkg_check_modules(GPIOD libgpiod)
+pkg_check_modules(GPIOD libgpiod>=2.0)
 
 # Crypto operations via libcryptsetup (optional - falls back to command if not available)
 option(SKIP_CRYPTSETUP "Skip libcryptsetup for Apache 2.0 licensing" OFF)
