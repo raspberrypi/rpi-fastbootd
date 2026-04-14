@@ -397,14 +397,10 @@ bool EraseHandler(FastbootDevice* device, const std::vector<std::string>& args) 
         return device->WriteStatus(FastbootResult::FAIL, "Partition doesn't exist");
     }
     if (android::wipe_block_device(handle.fd()) == 0) {
-        //Perform oem PostWipeData if Android userdata partition has been erased
-        // bool support_oem_postwipedata = false;
-        // if (partition_name == "userdata") {
-        //     PostWipeData();
-        //     support_oem_postwipedata = OemPostWipeData(device);
-        // }
-
-        // if (!support_oem_postwipedata) {
+        // Inform the kernel that the partition table has changed so it
+        // drops stale partition device nodes.  Ignore errors — this is
+        // best-effort and will be retried by IDP before partitioning.
+        ioctl(handle.fd(), BLKRRPART);
 
             return device->WriteStatus(FastbootResult::OKAY, "Erasing succeeded");
         // } else {
