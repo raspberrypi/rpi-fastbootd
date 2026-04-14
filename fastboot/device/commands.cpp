@@ -17,6 +17,9 @@
 #include "commands.h"
 
 #include <inttypes.h>
+#include <linux/fs.h>
+#include <sys/ioctl.h>
+#include <sys/mount.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/un.h>
