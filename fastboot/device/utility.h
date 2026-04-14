@@ -163,6 +163,7 @@ namespace rpi {
         std::expected<std::string, RPI_FW_CRYPTO_STATUS> GetPublicKey();
         std::expected<std::string, RPI_FW_CRYPTO_STATUS> GetPrivateKey();
         static std::expected<bool, RPI_FW_CRYPTO_STATUS> GetCachedProvisioningStatus();
+        static void RefreshProvisioningStatus();
         int ProvisionKey();
         std::expected<std::string, RPI_FW_CRYPTO_STATUS> CalculateHmac(const std::vector<uint8_t>& message);
         std::string GetKeyStatusString();
