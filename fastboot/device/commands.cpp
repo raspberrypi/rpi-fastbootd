@@ -402,6 +402,7 @@ bool EraseHandler(FastbootDevice* device, const std::vector<std::string>& args) 
         // }
 
         // if (!support_oem_postwipedata) {
+
             return device->WriteStatus(FastbootResult::OKAY, "Erasing succeeded");
         // } else {
         //     //Write device status in OemPostWipeData(), so just return true
@@ -535,9 +536,10 @@ namespace {
           return device->WriteFail("IDP:invalid description");
        }
 
-       if (!device->idp->canProvision()) {
+       std::string provision_reason;
+       if (!device->idp->canProvision(provision_reason)) {
           device->idp.reset();
-          return device->WriteFail("IDP:cannot provision");
+          return device->WriteFail("IDP:cannot provision: " + provision_reason);
        }
 
        device->idpcookie = device->idp->createCookie();
@@ -560,8 +562,9 @@ namespace {
           return device->WriteFail("IDP:not initialised");
        }
 
-       if (!device->idp->startProvision()) {
-          return device->WriteFail("IDP:failed to start provisioning");
+       std::string write_reason;
+       if (!device->idp->startProvision(write_reason)) {
+          return device->WriteFail("IDP:failed to start provisioning: " + write_reason);
        }
 
        return device->WriteOkay("IDP:ok");
@@ -577,6 +580,10 @@ namespace {
        } else {
           if (!device->idp) {
              return device->WriteFail("IDP:not initialised");
+          }
+          if (device->idp->getState() != IDPdevice::IDPstate::Partitioned) {
+             return device->WriteFail("IDP:not partitioned (state " +
+                    std::to_string(static_cast<int>(device->idp->getState())) + ")");
           }
           bd = device->idp->getNextBlockDevice(*device->idpcookie);
        }
@@ -609,13 +616,15 @@ namespace {
        }
 
        bool result = device->idp->endProvision();
+       auto finalState = device->idp->getState();
        device->idp.reset();
 
        if (result) {
           return device->WriteOkay("IDP:done");
        }
 
-       return device->WriteFail("IDP:error finalising");
+       return device->WriteFail("IDP:error finalising (state " +
+              std::to_string(static_cast<int>(finalState)) + ")");
     }
 
     // oem cryptinit <blkdev> <label>

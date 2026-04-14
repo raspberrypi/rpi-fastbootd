@@ -16,15 +16,15 @@ class IDPdeviceWriter {
       explicit IDPdeviceWriter(IDPdevice* device);
       ~IDPdeviceWriter();
 
-      bool PrepareStorage();
+      bool PrepareStorage(std::string& reason);
       bool FinaliseStorage();
 
    private:
       IDPdevice* device_; // Owner
 
-      bool WritePhysicalPartitions();
-      bool InitPhysicalPartitions();
-      bool InitCryptPartitions();
+      bool WritePhysicalPartitions(std::string& reason);
+      bool InitPhysicalPartitions(std::string& reason);
+      bool InitCryptPartitions(std::string& reason);
       void CloseCryptPartitions();
 };
 
@@ -61,8 +61,8 @@ class IDPdevice {
       ~IDPdevice();
 
       bool Initialise(const char* jdata, size_t length);
-      bool canProvision();
-      bool startProvision();
+      bool canProvision(std::string& reason);
+      bool startProvision(std::string& reason);
       IDPstate getState () const {return state_;}
       bool endProvision();
 

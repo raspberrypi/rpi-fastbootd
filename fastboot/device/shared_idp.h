@@ -29,7 +29,8 @@ class SharedIDPContext {
         if (!dev->Initialise(data, length)) {
             return false;
         }
-        if (!dev->canProvision()) {
+        std::string reason;
+        if (!dev->canProvision(reason)) {
             return false;
         }
 
@@ -42,7 +43,8 @@ class SharedIDPContext {
     bool StartProvision() {
         std::lock_guard<std::mutex> lock(mutex_);
         if (!idp_) return false;
-        return idp_->startProvision();
+        std::string reason;
+        return idp_->startProvision(reason);
     }
 
     // Thread-safe: claim the next partition to flash.

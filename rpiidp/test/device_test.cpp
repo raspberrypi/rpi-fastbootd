@@ -57,12 +57,14 @@ int main(int argc, char* argv[]) {
    if (!dev.Initialise(buffer.data(), buffer.size()))
       return -1;
 
-   bool ready = dev.canProvision();
-   MSG(ready ? "Ready for provisioning" : "Not ready for provisioning");
+   std::string reason;
+   bool ready = dev.canProvision(reason);
+   MSG(ready ? "Ready for provisioning" : "Not ready for provisioning: " + reason);
    if (!ready)
       return -1;
 
-   if (dev.startProvision()) {
+   std::string provision_reason;
+   if (dev.startProvision(provision_reason)) {
       auto cookie = dev.createCookie();
       while (auto bd = dev.getNextBlockDevice(*cookie)) {
          std::cout << "blkdev: " << bd->blockDev << " wants simg: " << bd->simg << std::endl;

@@ -208,27 +208,33 @@ bool IDPdevice::Initialise(const char* jdata, size_t length)
 }
 
 
-bool IDPdevice::canProvision()
+bool IDPdevice::canProvision(std::string& reason)
 {
-   if (getState() != IDPstate::Config)
+   if (getState() != IDPstate::Config) {
+      reason = "not in config state";
       return false;
+   }
 
    if (!validateDeviceIdent()) {
+      reason = "device class mismatch (expected " + image_.device_class + ")";
       ERR("Device identification error");
       return false;
    }
 
    if (!validateDeviceReadiness()) {
+      reason = "storage device not ready (" + std::string(image_.device_storage.BlockDev()) + ")";
       ERR("Device is not ready");
       return false;
    }
 
    if (!validateDeviceStorage()) {
+      reason = "insufficient storage (need " + std::to_string(isize_) + ", have " + std::to_string(dcap_) + ")";
       ERR("Device storage error");
       return false;
    }
 
    if (!validateProvisioningIntent()) {
+      reason = "firmware crypto unavailable (required for encrypted provisioning)";
       ERR("Device provisioning intent denied");
       return false;
    }
@@ -249,11 +255,10 @@ bool IDPdevice::canProvision()
 }
 
 
-bool IDPdevice::startProvision()
+bool IDPdevice::startProvision(std::string& reason)
 {
-   bool ret;
-
    if (getState() != IDPstate::Ready) {
+      reason = "not in ready state (current: " + std::to_string(static_cast<int>(getState())) + ")";
       ERR("Not ready");
       return false;
    }
@@ -263,17 +268,18 @@ bool IDPdevice::startProvision()
    // No going back now
    setState(IDPstate::Writing);
 
-   ret = writer.PrepareStorage();
+   bool ret = writer.PrepareStorage(reason);
 
    if (!ret) {
       ERR("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
       ERR("!! FAILED to prepare device storage !!");
       ERR("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
       setState(IDPstate::Error);
+      return false;
    }
 
    setState(IDPstate::Partitioned);
-   return ret;
+   return true;
 }
 
 
@@ -553,10 +559,13 @@ IDPdeviceWriter::IDPdeviceWriter(IDPdevice* device)
 IDPdeviceWriter::~IDPdeviceWriter() = default;
 
 
-bool IDPdeviceWriter::PrepareStorage()
+bool IDPdeviceWriter::PrepareStorage(std::string& reason)
 {
-   return (InitPhysicalPartitions() &&
-           InitCryptPartitions()) ? true : false;
+   if (!InitPhysicalPartitions(reason))
+      return false;
+   if (!InitCryptPartitions(reason))
+      return false;
+   return true;
 }
 
 
@@ -570,11 +579,12 @@ bool IDPdeviceWriter::FinaliseStorage()
 // deviceWriter Private
 
 
-bool IDPdeviceWriter::WritePhysicalPartitions()
+bool IDPdeviceWriter::WritePhysicalPartitions(std::string& reason)
 {
    bool ret = false;
    RPIparted parted;
    std::string msg;
+   std::string dev = device_->image_.device_storage.BlockDev();
 
    std::string type =
       device_->image_.device_storage.ptable_type == IDPptable_type::DOS ?
@@ -582,14 +592,14 @@ bool IDPdeviceWriter::WritePhysicalPartitions()
 
    msg = ("Creating new " +
          type +
-         " partition table on " +
-         device_->image_.device_storage.BlockDev()); MSG(msg);
+         " partition table on " + dev); MSG(msg);
 
    // Create new partition table
-   ret = parted.openDevice(device_->image_.device_storage.BlockDev(),
+   ret = parted.openDevice(dev,
          device_->image_.device_storage.ptable_align / 1024);
 
-  if (!ret) {
+   if (!ret) {
+      reason = "parted: unable to open " + dev;
       ERR("Unable to open device for partitioning");
       return false;
    }
@@ -607,6 +617,7 @@ bool IDPdeviceWriter::WritePhysicalPartitions()
    }
 
    if (!ret) {
+      reason = "parted: failed to create " + type + " partition table on " + dev;
       ERR("Failed to create partition table");
       parted.closeDevice();
       return false;
@@ -633,8 +644,7 @@ bool IDPdeviceWriter::WritePhysicalPartitions()
 
          msg = ("Creating p" +
                std::to_string(part.num) +
-               " on " +
-               device_->image_.device_storage.BlockDev() +
+               " on " + dev +
                " size (bytes) " +
                std::to_string(attrs.size_bytes) +
               " type " + attrs.type_id); MSG(msg);
@@ -642,26 +652,31 @@ bool IDPdeviceWriter::WritePhysicalPartitions()
          // API auto aligns
          ret = parted.appendPartition(attrs);
 
-         if (!ret)
+         if (!ret) {
+            reason = "parted: failed to create partition p" +
+                     std::to_string(part.num) + " (" +
+                     std::to_string(attrs.size_bytes) + " bytes) on " + dev;
             break;
+         }
       }
    }
 
-   if (!ret)
+   if (!ret) {
       ERR("Errors encountered during partitioning");
-   else
+   } else {
       ret = parted.commit(); // Write partition table to disk
+      if (!ret)
+         reason = "parted: failed to commit partition table on " + dev;
+   }
 
    (void)parted.closeDevice();
    return ret;
 }
 
 
-bool IDPdeviceWriter::InitPhysicalPartitions()
+bool IDPdeviceWriter::InitPhysicalPartitions(std::string& reason)
 {
-   bool ret = WritePhysicalPartitions();
-
-   if (!ret) {
+   if (!WritePhysicalPartitions(reason)) {
       ERR("Failed to create physical partitions");
       return false;
    }
@@ -669,19 +684,23 @@ bool IDPdeviceWriter::InitPhysicalPartitions()
    // Wait for a successful re-read of the partition table. This should
    // guarantee kernel, udev etc have updated device nodes, internal states, etc
    if (!utils::WaitReReadPartitionTable(device_->image_.device_storage.BlockDev())) {
+      reason = "timed out re-reading partition table on " + device_->image_.device_storage.BlockDev();
       ERR("Timed out re-reading partition table on storage device: " <<
             device_->image_.device_storage.BlockDev());
       return false;
    }
 
+   bool ret = true;
    for (auto& part : device_->partitions_) {
       if (part.getParentIndex() == -1) {
          // Assign corresponding block device to all root partitions we created.
          // It would be much better if we could retrieve this from the parted API
          // via probe, rather than assigning the device we expect.
          ret = device_->setPartBlockDev(&part, device_->image_.device_storage.BlockDev(part.num));
-         if (!ret)
+         if (!ret) {
+            reason = "block device not found: " + device_->image_.device_storage.BlockDev(part.num);
             break;
+         }
       }
    }
 
@@ -692,40 +711,48 @@ bool IDPdeviceWriter::InitPhysicalPartitions()
 }
 
 
-bool IDPdeviceWriter::InitCryptPartitions()
+bool IDPdeviceWriter::InitCryptPartitions(std::string& reason)
 {
    bool ret = true;
 
    // Create LUKS containers, initialise and open all encrypted children
    for (auto& part : device_->partitions_) {
       if (part.isCryptContainer()) {
+         std::string cdev = device_->image_.device_storage.BlockDev(part.num);
 
-         ret = part.luks->Create(device_->image_.device_storage.BlockDev(part.num), std::nullopt);
-         if (!ret)
+         ret = part.luks->Create(cdev, std::nullopt);
+         if (!ret) {
+            reason = "LUKS create failed on " + cdev;
             break;
+         }
 
-         ret = part.luks->Open(device_->image_.device_storage.BlockDev(part.num));
-         if (!ret)
+         ret = part.luks->Open(cdev);
+         if (!ret) {
+            reason = "LUKS open failed on " + cdev;
             break;
+         }
 
          if (part.hasChildren(device_->partitions_)) {
             // Create GPT on the LUKS block device if using a partitioned scheme
             if (part.luks->etype == IDPluks::encap_type::Partitioned) {
                RPIparted parted;
                std::string msg;
+               std::string luksdev = part.luks->BlockDev(0);
 
-               bool ret = parted.openDevice(part.luks->BlockDev(0),
+               bool ret = parted.openDevice(luksdev,
                      device_->image_.device_storage.ptable_align / 1024);
 
-               if (!ret)
+               if (!ret) {
+                  reason = "parted: unable to open LUKS device " + luksdev;
                   break;
+               }
 
-               msg = ("Creating new GPT partition table on " +
-                     part.luks->BlockDev(0)); MSG(msg);
+               msg = ("Creating new GPT partition table on " + luksdev); MSG(msg);
 
                ret = parted.createPartitionTable("GPT", std::nullopt);
 
                if (!ret) {
+                  reason = "parted: failed to create GPT on LUKS device " + luksdev;
                   parted.closeDevice();
                   break;
                }
@@ -752,16 +779,18 @@ bool IDPdeviceWriter::InitCryptPartitions()
 
                      msg = ("Creating p" +
                            std::to_string(child.num) +
-                           " on " +
-                           part.luks->BlockDev(0) +
+                           " on " + luksdev +
                            " size (bytes) " +
                            std::to_string(attrs.size_bytes) +
                            " type " + attrs.type_id); MSG(msg);
 
                      ret = parted.appendPartition(attrs);
                   }
-                  if (!ret)
+                  if (!ret) {
+                     reason = "parted: failed to create LUKS partition p" +
+                              std::to_string(child.num) + " on " + luksdev;
                      break;
+                  }
                }
 
                if (ret)
@@ -774,7 +803,7 @@ bool IDPdeviceWriter::InitCryptPartitions()
                // insufficient.
                if (ret) {
                   std::string bin = "kpartx";
-                  std::string device = part.luks->BlockDev(0);
+                  std::string device = luksdev;
                   char *argv[] = {
                      const_cast<char*>(bin.c_str()),
                      const_cast<char*>("-a"),
@@ -792,8 +821,10 @@ bool IDPdeviceWriter::InitCryptPartitions()
                      child.isEncrypted(device_->partitions_)) {
 
                   ret = device_->setPartBlockDev(&child, part.luks->BlockDev(child.num));
-                  if (!ret)
+                  if (!ret) {
+                     reason = "LUKS child block device not found: " + part.luks->BlockDev(child.num);
                      break;
+                  }
                }
             }
          }
