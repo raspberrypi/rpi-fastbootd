@@ -919,6 +919,112 @@ ssize_t bulk_write(int bulk_in, const char *buf, size_t length)
         }
     }
 
+    // ── oem mount / oem umount ─────────────────────────────────────────
+    //
+    // Mount a block device partition so that oem download-file / upload-file
+    // can access its filesystem.  The mountpoint directory is created
+    // automatically and removed on umount.
+    //
+    // Usage:
+    //   oem mount <device> <mountpoint>           — auto-detect fs type
+    //   oem mount <device> <mountpoint> <fstype>  — explicit fs type
+    //   oem umount <mountpoint>
+
+    static bool oem_cmd_mount(FastbootDevice* device, const std::vector<std::string>& args) {
+        // args: ["oem", "mount", "<device>", "<mountpoint>"]
+        //   or: ["oem", "mount", "<device>", "<mountpoint>", "<fstype>"]
+        if (args.size() < 4) {
+            return device->WriteFail(
+                "Usage: oem mount <device> <mountpoint> [fstype]\r\n"
+                "e.g.:  oem mount mmcblk0p1 /mnt/bootfs\r\n"
+                "       oem mount mmcblk0p1 /mnt/bootfs vfat");
+        }
+
+        std::string dev_path = args[2];
+        const std::string& mountpoint = args[3];
+
+        // Allow bare device names (mmcblk0p1) as well as full paths (/dev/mmcblk0p1)
+        if (dev_path[0] != '/') {
+            dev_path = "/dev/" + dev_path;
+        }
+
+        // Validate the block device exists
+        struct stat st;
+        if (stat(dev_path.c_str(), &st) != 0) {
+            return device->WriteFail("Device not found: " + dev_path + ": " + strerror(errno));
+        }
+        if (!S_ISBLK(st.st_mode)) {
+            return device->WriteFail("Not a block device: " + dev_path);
+        }
+
+        // Create the mountpoint directory (parents included)
+        std::string mkdir_cmd = "mkdir -p " + mountpoint;
+        if (system(mkdir_cmd.c_str()) != 0) {
+            return device->WriteFail("Failed to create mountpoint: " + mountpoint);
+        }
+
+        // Determine filesystem type
+        const char* fstype = nullptr;
+        std::string fstype_str;
+        if (args.size() >= 5) {
+            fstype_str = args[4];
+            fstype = fstype_str.c_str();
+        }
+
+        // Mount with common options; try auto-detect first if no fstype given
+        unsigned long flags = MS_NOATIME;
+        if (mount(dev_path.c_str(), mountpoint.c_str(), fstype, flags, nullptr) != 0) {
+            // If auto-detect failed, try common Pi filesystem types
+            if (fstype == nullptr) {
+                const char* types[] = {"vfat", "ext4", nullptr};
+                bool mounted = false;
+                for (int i = 0; types[i] != nullptr; ++i) {
+                    if (mount(dev_path.c_str(), mountpoint.c_str(), types[i], flags, nullptr) == 0) {
+                        mounted = true;
+                        fstype_str = types[i];
+                        break;
+                    }
+                }
+                if (!mounted) {
+                    return device->WriteFail("Mount failed for " + dev_path + " on " + mountpoint +
+                                             ": " + strerror(errno));
+                }
+            } else {
+                return device->WriteFail("Mount failed for " + dev_path + " on " + mountpoint +
+                                         " (type " + fstype_str + "): " + strerror(errno));
+            }
+        }
+
+        LOG(INFO) << "oem mount: " << dev_path << " on " << mountpoint
+                  << " (type " << (fstype_str.empty() ? "auto" : fstype_str) << ")";
+        return device->WriteOkay("Mounted " + dev_path + " on " + mountpoint);
+    }
+
+    static bool oem_cmd_umount(FastbootDevice* device, const std::vector<std::string>& args) {
+        // args: ["oem", "umount", "<mountpoint>"]
+        if (args.size() < 3) {
+            return device->WriteFail("Usage: oem umount <mountpoint>");
+        }
+
+        const std::string& mountpoint = args[2];
+
+        // Sync before unmounting to flush writes
+        sync();
+
+        if (umount(mountpoint.c_str()) != 0) {
+            // Try lazy unmount as fallback for busy mounts
+            if (umount2(mountpoint.c_str(), MNT_DETACH) != 0) {
+                return device->WriteFail("Unmount failed for " + mountpoint + ": " + strerror(errno));
+            }
+        }
+
+        // Best-effort removal of the mountpoint directory
+        rmdir(mountpoint.c_str());
+
+        LOG(INFO) << "oem umount: " << mountpoint;
+        return device->WriteOkay("Unmounted " + mountpoint);
+    }
+
     #define DOWNLOAD_FILE_USAGE "e.g:\r\n\toem download-file <path-to-destination>"
     static bool oem_cmd_download_file(FastbootDevice* device, const std::vector<std::string>& args) {
         if (args.size() < 3) {
@@ -1544,6 +1650,10 @@ bool OemCmdHandler(FastbootDevice* device, const std::vector<std::string>& args)
         return oem_cmd_partinit(device, split_args);
     } else if (command_name == "partapp") {
         return oem_cmd_partapp(device, split_args);
+    } else if (command_name == "mount") {
+        return oem_cmd_mount(device, split_args);
+    } else if (command_name == "umount") {
+        return oem_cmd_umount(device, split_args);
     } else if (command_name == "download-file") {
         return oem_cmd_download_file(device, split_args);
     } else if (command_name == "upload-file") {
