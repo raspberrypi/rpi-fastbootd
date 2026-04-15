@@ -66,7 +66,7 @@ target_include_directories(rpiidp PUBLIC
    ${JSONCPP_INCLUDE_DIRS}
 )
 
-if (IDP_TESTS AND NOT IDP_FASTBOOT)
+if (IDP_TESTS)
    set(JSONCPP_INCLUDE_DIR ${JSONCPP_INCLUDE_DIRS} CACHE INTERNAL "")
    add_subdirectory(test)
 endif()

@@ -52,7 +52,7 @@ int main(int argc, char* argv[]) {
 
    buffer = readFile(filePath);
 
-   IDPdevice dev(std::filesystem::path("/tmp/my.keyfile"));
+   IDPdevice dev;
 
    if (!dev.Initialise(buffer.data(), buffer.size()))
       return -1;
