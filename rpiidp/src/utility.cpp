@@ -11,6 +11,7 @@
 #include <unistd.h>
 #include <sys/ioctl.h>
 #include <linux/fs.h>
+#include <libudev.h>
 
 #include "utility.h"
 
@@ -121,7 +122,7 @@ namespace utils {
       return true;
    }
 
-   bool waitBlockDev(const std::string& dev, int timeout_sec)
+   bool WaitBlockDev(const std::string& dev, int timeout_sec)
    {
       const int interval_ms = 100;
       const int max_attempts = timeout_sec * 1000 / interval_ms;
@@ -133,6 +134,68 @@ namespace utils {
          std::this_thread::sleep_for(std::chrono::milliseconds(interval_ms));
       }
       return false;
+   }
+
+   // Wait until udev has finished its processing for a block device
+   bool WaitUdevBlockDev(const std::string& target_path, int timeout_ms) {
+      struct udev* udev = udev_new();
+      if (!udev) {
+         return false;
+      }
+
+      auto start = std::chrono::steady_clock::now();
+      bool ready = false;
+
+      while (true) {
+         struct udev_enumerate* enm = udev_enumerate_new(udev);
+         udev_enumerate_add_match_subsystem(enm, "block");
+         udev_enumerate_scan_devices(enm);
+
+         struct udev_list_entry *devices = udev_enumerate_get_list_entry(enm), *entry;
+         udev_list_entry_foreach(entry, devices) {
+            const char* syspath = udev_list_entry_get_name(entry);
+            struct udev_device* dev = udev_device_new_from_syspath(udev, syspath);
+            if (!dev) {
+               continue;
+            }
+
+            // 1. Check primary node (eg, /dev/mmcblk0p1)
+            const char* devnode = udev_device_get_devnode(dev);
+            if (devnode && target_path == devnode) {
+               ready = udev_device_get_is_initialized(dev);
+            }
+            // 2. Check all symlinks (eg, /dev/mapper/foo or /dev/disk/...)
+            else {
+               struct udev_list_entry *links = udev_device_get_devlinks_list_entry(dev), *link;
+               udev_list_entry_foreach(link, links) {
+                  if (target_path == udev_list_entry_get_name(link)) {
+                     ready = udev_device_get_is_initialized(dev);
+                     break;
+                  }
+               }
+            }
+
+            udev_device_unref(dev);
+            if (ready) {
+               break;
+            }
+         }
+         udev_enumerate_unref(enm);
+
+         if (ready) {
+            break;
+         }
+
+         auto now = std::chrono::steady_clock::now();
+         if (std::chrono::duration_cast<std::chrono::milliseconds>(now - start).count() >= timeout_ms) {
+            break;
+         }
+
+         std::this_thread::sleep_for(std::chrono::milliseconds(100));
+      }
+
+      udev_unref(udev);
+      return ready;
    }
 
    std::vector<char*> to_execvp_argv(const std::vector<std::string>& args)

@@ -497,7 +497,7 @@ bool IDPdevice::checkFirmwareCryptoStatus() const
 bool IDPdevice::validateDeviceReadiness() const
 {
    // Wait 1s max for the storage we're going to provision to be ready
-   if (!utils::waitBlockDev(image_.device_storage.BlockDev(), 1)) {
+   if (!utils::WaitBlockDev(image_.device_storage.BlockDev(), 1)) {
       ERR("Device storage is not available for provisioning: " <<
             image_.device_storage.BlockDev());
       return false;
@@ -508,6 +508,13 @@ bool IDPdevice::validateDeviceReadiness() const
    // this check passes.
    if (!utils::ReReadPartitionTable(image_.device_storage.BlockDev())) {
       ERR("Device storage for provisioning is in use: " <<
+            image_.device_storage.BlockDev());
+      return false;
+   }
+
+   // Wait 5s for the storage device event queue to drain
+   if (!utils::WaitUdevBlockDev(image_.device_storage.BlockDev(), 5000)) {
+      ERR("Timed out waiting for device storage: " <<
             image_.device_storage.BlockDev());
       return false;
    }
@@ -541,12 +548,18 @@ bool IDPdevice::setPartBlockDev(IDPpartition * part, std::string dev)
    if (dev.empty())
       return false;
 
-   if (utils::waitBlockDev(dev)) {
-      part->setBlockDev(dev);
-      return true;
+   if (!utils::WaitUdevBlockDev(dev, 5000)) {
+      ERR("Timed out waiting for: " << dev);
+      return false;
    }
-   ERR("Not a block device: " << dev);
-   return false;
+
+   if (!utils::BlockDevReady(dev)) {
+      ERR("Not a block device: " << dev);
+      return false;
+   }
+
+   part->setBlockDev(dev);
+   return true;
 }
 
 

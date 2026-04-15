@@ -30,6 +30,9 @@ endif()
 
 include_directories(${CMAKE_SOURCE_DIR}/include)
 
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(UDEV REQUIRED libudev)
+
 option(IDP_FASTBOOT "Build IDP with fastboot integration" ON)
 option(IDP_TESTS "Build IDP tests" ON)
 
@@ -59,7 +62,8 @@ else()
    add_subdirectory(../rpiparted rpiparted)
 endif()
 
-target_link_libraries(rpiidp PRIVATE ${JSONCPP_LIBRARIES} rpiparted)
+target_include_directories(rpiidp PRIVATE ${UDEV_INCLUDE_DIRS})
+target_link_libraries(rpiidp PRIVATE ${JSONCPP_LIBRARIES} rpiparted ${UDEV_LIBRARIES})
 
 target_include_directories(rpiidp PUBLIC 
    ${CMAKE_CURRENT_SOURCE_DIR}/include

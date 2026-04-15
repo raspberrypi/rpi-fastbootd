@@ -10,7 +10,9 @@ namespace utils {
 
    bool BlockDevReady(const std::string& dev);
 
-   bool waitBlockDev(const std::string& dev, int timeout_sec = 5);
+   bool WaitBlockDev(const std::string& dev, int timeout_sec = 5);
+
+   bool WaitUdevBlockDev(const std::string& dev, int timeout_ms = 5000);
 
    bool ReReadPartitionTable(const std::string& dev);
 
