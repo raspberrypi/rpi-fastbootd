@@ -322,6 +322,10 @@ namespace rpi {
         return key_provisioned_status_;
     }
 
+    void RpiFwCrypto::RefreshProvisioningStatus() {
+        key_provisioned_status_ = IsKeyProvisioned();
+    }
+
     /**
      * Provision a new ECDSA key into the slot
      * @return 0 on success, negative error code on failure
