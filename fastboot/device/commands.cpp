@@ -1566,6 +1566,9 @@ ssize_t bulk_write(int bulk_in, const char *buf, size_t length)
             // Provision the key
             int result = crypto.ProvisionKey();
             if (result == 0) {
+                // Re-query and update the cached status so subsequent
+                // checks (e.g. IDP canProvision) see the new key.
+                crypto.RefreshProvisioningStatus();
                 return device->WriteOkay("Key provisioned successfully");
             } else {
                 return device->WriteFail("Failed to provision key");
