@@ -38,20 +38,20 @@ void IDPcookieDeleter(IDPcookie* ptr) {
 
 namespace DeviceValidation {
 
-   std::string translateDeviceClass(const std::string& device_class) {
-      static const std::map<std::string, std::string> device_translations = {
-         {"pi4", "Raspberry Pi 4"},
-         {"cm4", "Raspberry Pi Compute Module 4"},
-         {"pi5", "Raspberry Pi 5"},
-         {"cm5", "Raspberry Pi Compute Module 5"},
-         {"zero2w", "Raspberry Pi Zero 2 W"}
+   // Map a device class to all DT model strings in the same family.
+   // Pi 5 and CM5 are the same silicon; likewise Pi 4, CM4, CM4 Lite, CM4S.
+   static const std::vector<std::string>& familyModels(const std::string& device_class) {
+      static const std::map<std::string, std::vector<std::string>> families = {
+         {"pi5",    {"Raspberry Pi 5", "Raspberry Pi Compute Module 5"}},
+         {"cm5",    {"Raspberry Pi 5", "Raspberry Pi Compute Module 5"}},
+         {"pi4",    {"Raspberry Pi 4", "Raspberry Pi Compute Module 4", "Raspberry Pi 400"}},
+         {"cm4",    {"Raspberry Pi 4", "Raspberry Pi Compute Module 4", "Raspberry Pi 400"}},
+         {"zero2w", {"Raspberry Pi Zero 2"}},
       };
+      static const std::vector<std::string> empty;
 
-      auto it = device_translations.find(device_class);
-      if (it != device_translations.end()) {
-         return it->second;
-      }
-      return device_class;
+      auto it = families.find(device_class);
+      return (it != families.end()) ? it->second : empty;
    }
 
    bool checkDeviceClass(const std::string& expected_class) {
@@ -65,21 +65,36 @@ namespace DeviceValidation {
          std::string actual_model;
          std::getline(model_file, actual_model);
 
-         std::string translated_class = translateDeviceClass(expected_class);
-         std::string expected_lower = translated_class;
          std::string actual_lower = actual_model;
-         std::transform(expected_lower.begin(), expected_lower.end(), expected_lower.begin(), ::tolower);
          std::transform(actual_lower.begin(), actual_lower.end(), actual_lower.begin(), ::tolower);
 
-         if (actual_lower.find(expected_lower) == std::string::npos) {
-            ERR("Device class mismatch. Wanted: " << translated_class
-               << " (" << expected_class << ")"
+         const auto& models = familyModels(expected_class);
+         if (models.empty()) {
+            // Unknown class — fall back to literal substring match
+            std::string class_lower = expected_class;
+            std::transform(class_lower.begin(), class_lower.end(), class_lower.begin(), ::tolower);
+            if (actual_lower.find(class_lower) != std::string::npos) {
+               MSG("Detected: " << actual_model);
+               return true;
+            }
+            ERR("Device class mismatch. Wanted: " << expected_class
                << ". Got: " << actual_model);
             return false;
          }
 
-         MSG("Detected: " << actual_model);
-         return true;
+         for (const auto& model : models) {
+            std::string model_lower = model;
+            std::transform(model_lower.begin(), model_lower.end(), model_lower.begin(), ::tolower);
+            if (actual_lower.find(model_lower) != std::string::npos) {
+               MSG("Detected: " << actual_model);
+               return true;
+            }
+         }
+
+         ERR("Device class mismatch. Wanted family: " << expected_class
+            << " (accepts: " << models.front() << ", ...)"
+            << ". Got: " << actual_model);
+         return false;
 
       } catch (const std::exception& e) {
          ERR("Error checking device class: " << e.what());
