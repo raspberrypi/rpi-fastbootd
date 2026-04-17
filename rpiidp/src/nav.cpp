@@ -60,10 +60,17 @@ namespace Validation {
       }
 
       // Optional fields
-      if (luks.isMember("label") && !(luks["label"].isString())) {
-         nr.error("LUKS key label is not a string.");
-         return nr;
+      if (luks.isMember("label")) {
+         if (!luks["label"].isString()) {
+            nr.error("LUKS key label is not a string.");
+            return nr;
+         }
+         if (luks["label"].asString().size() > 36) {
+            nr.error("LUKS label exceeds max length of 36 characters.");
+            return nr;
+         }
       }
+
       if (luks.isMember("uuid") && !(luks["uuid"].isString())) {
          nr.error("LUKS key uuid is not a string.");
          return nr;
