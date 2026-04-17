@@ -2,6 +2,7 @@
 #include <iostream>
 #include <cstring>
 #include <cassert>
+#include <cstdio>
 #include "idpparser.h"
 #include "idpversion.h"
 #include "idpstorage.h"
@@ -677,17 +678,29 @@ const Json::Value& IDPparser::getJSON(const std::vector<std::string>& keys) cons
 
 bool IDPparser::walkTree()
 {
-   unsigned int root_num = 1;
+   unsigned int root_num = 1, crypt_num = 1;
    for (auto& part : partitions_) {
       if (part.getParentIndex() == -1) {
          part.num = root_num++; // No parent: top/root level partition
 
          if (part.isCryptContainer()) {
-            // Set partition type for the container
-            std::string code =
-               image_.device_storage.ptable_type == IDPptable_type::DOS ?
-               "0x83" : "0fc63daf-8483-4772-8e79-3d69d8477de4"; // linux
-            part.typecode = code;
+            // Set partition attributes for the container
+            if (image_.device_storage.ptable_type == IDPptable_type::GPT) {
+               part.typecode = "0fc63daf-8483-4772-8e79-3d69d8477de4"; // linux
+
+               // Reflect the label in the GPT, else set a fallback.
+               if (part.luks && part.luks->label) {
+                  part.gptlabel = *part.luks->label;
+               }
+               else {
+                  char label[36];
+                  std::snprintf(label, sizeof(label), "rpi-crypt%02d", crypt_num++);
+                  part.gptlabel = label;
+               }
+            }
+            else {
+               part.typecode = "0x83";
+            }
          }
 
          unsigned int child_num = 1;
