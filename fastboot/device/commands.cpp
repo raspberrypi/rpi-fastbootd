@@ -1941,9 +1941,16 @@ bool FlashHandler(FastbootDevice* device, const std::vector<std::string>& args) 
     //     CancelPartitionSnapshot(device, partition_name);
     // }
 
-    int ret = Flash(device, partition_name);
+    std::string flash_err;
+    int ret = Flash(device, partition_name, &flash_err);
     if (ret < 0) {
-        return device->WriteStatus(FastbootResult::FAIL, strerror(-ret));
+        std::string msg;
+        if (!flash_err.empty()) {
+            msg = flash_err;
+        } else {
+            msg = strerror(-ret);
+        }
+        return device->WriteStatus(FastbootResult::FAIL, msg);
     }
     // if (partition_name == "userdata") {
     //     PostWipeData();
