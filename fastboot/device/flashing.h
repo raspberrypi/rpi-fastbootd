@@ -21,4 +21,7 @@
 
 class FastbootDevice;
 
-int Flash(FastbootDevice* device, const std::string& partition_name);
+// Flash `partition_name` from the device's download buffer.
+// On failure, returns a negative errno and populates *err with a
+// context-rich human-readable message (if err != nullptr).
+int Flash(FastbootDevice* device, const std::string& partition_name, std::string* err = nullptr);

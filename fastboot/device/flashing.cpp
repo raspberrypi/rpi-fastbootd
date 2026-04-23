@@ -41,16 +41,32 @@ namespace {
 
 constexpr uint32_t SPARSE_HEADER_MAGIC = 0xed26ff3a;
 
+// Context passed through the libsparse callback's void* priv, so the
+// callback can report a specific error string back to the caller.
+struct SparseCallbackCtx {
+    PartitionHandle* handle;
+    uint64_t block_device_size;
+    std::string* err;  // may be null
+};
+
+void SetErr(std::string* err, const std::string& msg) {
+    if (err && err->empty()) {
+        *err = msg;
+    }
+}
+
 }  // namespace
 
-int FlashRawDataChunk(PartitionHandle* handle, const char* data, size_t len) {
+int FlashRawDataChunk(PartitionHandle* handle, const char* data, size_t len, std::string* err) {
     size_t ret = 0;
     const size_t max_write_size = 1048576;
     void* aligned_buffer;
     auto pagesize = sysconf(_SC_PAGESIZE);
 
-    if (posix_memalign(&aligned_buffer,pagesize, max_write_size)) {
+    if (posix_memalign(&aligned_buffer, pagesize, max_write_size)) {
         PLOG(ERROR) << "Failed to allocate write buffer";
+        SetErr(err, "posix_memalign of " + std::to_string(max_write_size) +
+                        "B write buffer failed");
         return -ENOMEM;
     }
 
@@ -63,14 +79,22 @@ int FlashRawDataChunk(PartitionHandle* handle, const char* data, size_t len) {
         if (this_len & 0xFFF) {
             if (handle->Reset(O_WRONLY) != true) {
                 PLOG(ERROR) << "Failed to reset file descriptor";
-                return -1;
+                SetErr(err, "failed to drop O_DIRECT on " + handle->path() +
+                                " for unaligned tail write");
+                return -EIO;
             }
         }
 
+        off64_t offset = lseek64(handle->fd(), 0, SEEK_CUR);
         int this_ret = write(handle->fd(), aligned_buffer_unique_ptr.get(), this_len);
         if (this_ret < 0) {
+            int saved = errno;
             PLOG(ERROR) << "Failed to flash data of len " << len;
-            return -1;
+            SetErr(err, "write(" + std::to_string(this_len) + "B) to " +
+                            handle->path() + " at offset " +
+                            std::to_string(offset) + " failed: " + strerror(saved));
+            errno = saved;
+            return -saved;
         }
         data += this_ret;
         ret += this_ret;
@@ -78,45 +102,64 @@ int FlashRawDataChunk(PartitionHandle* handle, const char* data, size_t len) {
     return 0;
 }
 
-int FlashRawData(PartitionHandle* handle, const std::vector<char>& downloaded_data) {
-    int ret = FlashRawDataChunk(handle, downloaded_data.data(), downloaded_data.size());
-    if (ret < 0) {
-        return -errno;
-    }
-    return ret;
+int FlashRawData(PartitionHandle* handle, const std::vector<char>& downloaded_data,
+                 std::string* err) {
+    return FlashRawDataChunk(handle, downloaded_data.data(), downloaded_data.size(), err);
 }
 
 int WriteCallback(void* priv, const void* data, size_t len) {
-    PartitionHandle* handle = reinterpret_cast<PartitionHandle*>(priv);
+    SparseCallbackCtx* ctx = reinterpret_cast<SparseCallbackCtx*>(priv);
+    PartitionHandle* handle = ctx->handle;
     if (!data) {
+        off64_t before = lseek64(handle->fd(), 0, SEEK_CUR);
         if (lseek64(handle->fd(), len, SEEK_CUR) < 0) {
-            int rv = -errno;
+            int saved = errno;
             PLOG(ERROR) << "lseek failed";
-            return rv;
+            off64_t target = (before < 0) ? -1 : before + static_cast<off64_t>(len);
+            SetErr(ctx->err, "sparse skip: lseek to offset " +
+                                 std::to_string(target) + " on " +
+                                 handle->path() + " (size " +
+                                 std::to_string(ctx->block_device_size) +
+                                 ") failed: " + strerror(saved));
+            errno = saved;
+            return -saved;
         }
         return 0;
     }
-    return FlashRawDataChunk(handle, reinterpret_cast<const char*>(data), len);
+    return FlashRawDataChunk(handle, reinterpret_cast<const char*>(data), len, ctx->err);
 }
 
-int FlashSparseData(PartitionHandle* handle, std::vector<char>& downloaded_data) {
+int FlashSparseData(PartitionHandle* handle, std::vector<char>& downloaded_data,
+                    uint64_t block_device_size, std::string* err) {
     struct sparse_file* file = sparse_file_import_buf(downloaded_data.data(),
                                                       downloaded_data.size(), true, false);
     if (!file) {
-        // Invalid sparse format
         LOG(ERROR) << "Unable to open sparse data for flashing";
+        SetErr(err, "not a valid sparse image (sparse_file_import_buf failed on " +
+                        std::to_string(downloaded_data.size()) + "B payload)");
         return -EINVAL;
     }
-    return sparse_file_callback(file, false, false, WriteCallback, reinterpret_cast<void*>(handle));
+
+    int64_t expanded = sparse_file_len(file, false, false);
+    if (expanded > 0 && static_cast<uint64_t>(expanded) > block_device_size) {
+        SetErr(err, "sparse image expands to " + std::to_string(expanded) +
+                        "B but partition " + handle->path() + " is only " +
+                        std::to_string(block_device_size) + "B");
+        return -EFBIG;
+    }
+
+    SparseCallbackCtx ctx{handle, block_device_size, err};
+    return sparse_file_callback(file, false, false, WriteCallback, &ctx);
 }
 
-int FlashBlockDevice(PartitionHandle* handle, std::vector<char>& downloaded_data) {
+int FlashBlockDevice(PartitionHandle* handle, std::vector<char>& downloaded_data,
+                     uint64_t block_device_size, std::string* err) {
     lseek64(handle->fd(), 0, SEEK_SET);
     if (downloaded_data.size() >= sizeof(SPARSE_HEADER_MAGIC) &&
         *reinterpret_cast<uint32_t*>(downloaded_data.data()) == SPARSE_HEADER_MAGIC) {
-        return FlashSparseData(handle, downloaded_data);
+        return FlashSparseData(handle, downloaded_data, block_device_size, err);
     } else {
-        return FlashRawData(handle, downloaded_data);
+        return FlashRawData(handle, downloaded_data, err);
     }
 }
 
@@ -141,40 +184,39 @@ int FlashBlockDevice(PartitionHandle* handle, std::vector<char>& downloaded_data
 //     }
 // }
 
-int Flash(FastbootDevice* device, const std::string& partition_name) {
+int Flash(FastbootDevice* device, const std::string& partition_name, std::string* err) {
     PartitionHandle handle;
     auto partition_path = partition_name;
     partition_path.insert(0, "/dev/");
     if (!OpenPartition(device, partition_path, &handle, O_WRONLY | O_DIRECT)) {
         LOG(ERROR) << "Cannot flash partition " << partition_path << " as failed to access";
+        SetErr(err, "cannot access partition " + partition_path +
+                        " (OpenPartition failed; partition may not exist)");
         return -ENOENT;
     }
     if (!handle.Open(O_WRONLY | O_DIRECT)){
+        int saved = errno;
         LOG(ERROR) << "Cannot open partition " << partition_path;
+        SetErr(err, "open(" + partition_path + ", O_WRONLY|O_DIRECT) failed: " +
+                        strerror(saved ? saved : ENOENT));
         return -ENOENT;
     }
 
     std::vector<char> data = std::move(device->download_data());
     if (data.size() == 0) {
         LOG(ERROR) << "Cannot flash empty data vector";
+        SetErr(err, "download buffer is empty; stage data before flashing " + partition_name);
         return -EINVAL;
     }
     uint64_t block_device_size = android::get_block_device_size(handle.fd());
     if (data.size() > block_device_size) {
         LOG(ERROR) << "Cannot flash " << data.size() << " bytes to block device of size "
                    << block_device_size;
+        SetErr(err, "payload " + std::to_string(data.size()) + "B exceeds partition " +
+                        partition_path + " size " + std::to_string(block_device_size) + "B");
         return -EOVERFLOW;
     }
-    // else if (data.size() < block_device_size &&
-    //            (partition_name == "boot" || partition_name == "boot_a" ||
-    //             partition_name == "boot_b" || partition_name == "init_boot" ||
-    //             partition_name == "init_boot_a" || partition_name == "init_boot_b")) {
-    //     CopyAVBFooter(&data, block_device_size);
-    // }
-    // if (android::base::GetProperty("ro.system.build.type", "") != "user") {
-    //     WipeOverlayfsForPartition(device, partition_name);
-    // }
-    int result = FlashBlockDevice(&handle, data);
+    int result = FlashBlockDevice(&handle, data, block_device_size, err);
     sync();
     return result;
 }
