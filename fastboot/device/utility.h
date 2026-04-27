@@ -167,5 +167,18 @@ namespace rpi {
         int ProvisionKey();
         std::expected<std::string, RPI_FW_CRYPTO_STATUS> CalculateHmac(const std::vector<uint8_t>& message);
         std::string GetKeyStatusString();
+
+        // Set the ARM_CRYPTO_KEY_STATUS_LOCKED flag on the device private
+        // key slot. Blocks the raw-private-key export API until reboot;
+        // does not affect sign/hmac/pubkey. Idempotent — calling when
+        // already LOCKED is a no-op.
+        // Returns 0 on success, negative errno / RPI_FW_CRYPTO_STATUS on
+        // failure.
+        int LockKey();
+
+        // Returns true if the key slot currently has the LOCKED flag set.
+        // False if unprovisioned, unlocked, or the status read failed
+        // (failure is treated conservatively as "not locked").
+        bool IsKeyLocked();
     };
 } // namespace rpi
