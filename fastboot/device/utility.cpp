@@ -360,6 +360,40 @@ namespace rpi {
     }
 
     /**
+     * Set the LOCKED flag on the device private key. Idempotent.
+     * Blocks raw-private-key export until reboot; does not affect
+     * sign/hmac/pubkey.
+     */
+    int RpiFwCrypto::LockKey() {
+        uint32_t status = 0;
+        int ret = rpi_fw_crypto_get_key_status(ARM_CRYPTO_DEVICE_PRIVATE_KEY_ID, &status);
+        if (ret != 0) {
+            LOG(ERROR) << "rpi_fw_crypto_get_key_status failed: " << ret;
+            return ret;
+        }
+        if (status & ARM_CRYPTO_KEY_STATUS_LOCKED) {
+            LOG(INFO) << "OTP key already LOCKED";
+            return 0;
+        }
+        ret = rpi_fw_crypto_set_key_status(ARM_CRYPTO_DEVICE_PRIVATE_KEY_ID,
+                                           status | ARM_CRYPTO_KEY_STATUS_LOCKED);
+        if (ret != 0) {
+            LOG(ERROR) << "rpi_fw_crypto_set_key_status(LOCKED) failed: " << ret;
+            return ret;
+        }
+        LOG(INFO) << "OTP key LOCKED";
+        return 0;
+    }
+
+    bool RpiFwCrypto::IsKeyLocked() {
+        uint32_t status = 0;
+        if (rpi_fw_crypto_get_key_status(ARM_CRYPTO_DEVICE_PRIVATE_KEY_ID, &status) != 0) {
+            return false;
+        }
+        return (status & ARM_CRYPTO_KEY_STATUS_LOCKED) != 0;
+    }
+
+    /**
      * Get the key status as a human-readable string
      * @return String describing the current key status
      */

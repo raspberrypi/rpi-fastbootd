@@ -1566,13 +1566,28 @@ ssize_t bulk_write(int bulk_in, const char *buf, size_t length)
             // Provision the key
             int result = crypto.ProvisionKey();
             if (result == 0) {
-                // Re-query and update the cached status so subsequent
-                // checks (e.g. IDP canProvision) see the new key.
-                crypto.RefreshProvisioningStatus();
-                return device->WriteOkay("Key provisioned successfully");
-            } else {
                 return device->WriteFail("Failed to provision key");
             }
+            // Re-query and update the cached status so subsequent
+            // checks (e.g. IDP canProvision) see the new key.
+            crypto.RefreshProvisioningStatus();
+
+            // Immediately LOCK the key-slot so the raw-private-key export
+            // API is unreachable for the rest of this boot. The production
+            // image's authenticated config.txt also sets
+            // lock_device_private_key=1 to achieve the same effect at the
+            // next boot; this belt-and-braces step closes the window
+            // between provisioning and reboot.
+            if (crypto.LockKey() != 0) {
+                // Fail loudly — we don't want provisioning to succeed while
+                // leaving the privkey exportable. The operator can recover
+                // by rebooting the device (which resets the LOCKED flag
+                // and lets us try again) or re-flashing the fastboot gadget.
+                return device->WriteFail(
+                    "Key provisioned but LOCK failed — refusing to report success; "
+                    "reboot and retry");
+            }
+            return device->WriteOkay("Key provisioned and LOCKed");
         } else if (subcommand == "sign-hash") {
             // Sign a pre-computed SHA-256 digest with the device's ECDSA key.
             // Used by rpi-sb-provisioner for Connect device identity registration.

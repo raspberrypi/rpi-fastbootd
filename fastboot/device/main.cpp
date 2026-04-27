@@ -36,6 +36,7 @@
 #include "fastboot_device.h"
 #include "shared_idp.h"
 #include "tcp_client.h"
+#include "utility.h"
 
 static constexpr int kMaxTcpWorkersHardCap = 8;
 static constexpr const char* kSdramSizeDtPath =
@@ -157,6 +158,34 @@ int main(int argc, char* argv[]) {
         }
     }
     sparse_print_verbose = LogSparseVerboseMessage;
+
+    // Startup: if the OTP private key is already provisioned, LOCK it
+    // immediately before accepting any fastboot traffic. This closes the
+    // raw-private-key export window on devices that are coming back into
+    // fastboot mode after a prior provisioning pass. A fresh / unprovisioned
+    // device has nothing to lock yet; the provisioning flow (`oem fwcrypto
+    // init`) locks explicitly after generating the key. The gadget image
+    // intentionally does NOT set lock_device_private_key=1 in its
+    // authenticated config.txt, so firmware does not lock before us — we
+    // take responsibility here.
+    {
+        rpi::RpiFwCrypto crypto;
+        auto status = rpi::RpiFwCrypto::GetCachedProvisioningStatus();
+        if (status && *status) {
+            if (crypto.IsKeyLocked()) {
+                LOG(INFO) << "Startup: OTP key is already LOCKED";
+            } else {
+                LOG(INFO) << "Startup: OTP key is provisioned but unlocked — LOCKing now";
+                int rc = crypto.LockKey();
+                if (rc != 0) {
+                    LOG(FATAL) << "Startup LOCK of provisioned OTP key failed (rc=" << rc
+                               << "); refusing to serve fastboot — privkey would be exportable";
+                }
+            }
+        } else {
+            LOG(INFO) << "Startup: OTP key is not provisioned — nothing to lock yet";
+        }
+    }
 
     std::string modestr = mode;
     if (modestr.find("tcp") != std::string::npos) {
