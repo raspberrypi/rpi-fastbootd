@@ -1240,134 +1240,209 @@ ssize_t bulk_write(int bulk_in, const char *buf, size_t length)
         return device->WriteOkay("gpioset completed.");
     }
 
-    // oem veritysetup <device_name>
-    // Calculates dm-verity hash for device and stores in /persistent/$device_name.verity
-    static bool oem_cmd_veritysetup(FastbootDevice* device, const std::vector<std::string>& args) {
-        if (args.size() < 3) {
-            return device->WriteFail("Usage: oem veritysetup <device_name>");
+#ifdef HAVE_LIBCRYPTSETUP
+    // Slot-scoped flock around verity handlers so concurrent USB+TCP
+    // invocations on the same slot are serialised. Released at scope exit.
+    // Returns -1 on failure (caller responds FAIL and aborts). [S6]
+    static int acquire_slot_flock(const std::string& slot) {
+        std::string lock_path = "/persistent/." + slot + ".verity.rhsig.lock";
+        int fd = open(lock_path.c_str(), O_CREAT | O_RDWR | O_CLOEXEC, 0644);
+        if (fd < 0) return -1;
+        if (flock(fd, LOCK_EX) != 0) {
+            close(fd);
+            return -1;
+        }
+        return fd;
+    }
+
+    // Shared preamble for oem_cmd_veritysetup / oem_cmd_verityappend.
+    // On success returns the flock fd (caller closes). On failure has
+    // already written the FAIL response and returns -1.
+    static int verity_common_preamble(FastbootDevice* device,
+                                      const std::string& data_device,
+                                      const std::string& slot) {
+        // [S1] Lock-status gate — only on UNLOCKED devices.
+        if (GetDeviceLockStatus()) {
+            device->WriteFail("Verity setup is not allowed on locked devices");
+            return -1;
         }
 
-        std::string device_name = args[2];
-        std::string data_device = "/dev/" + device_name;
-        
-        // Ensure /persistent directory exists
-        if (mkdir("/persistent", 0755) != 0 && errno != EEXIST) {
-            return device->WriteFail("Failed to create /persistent directory: " + std::string(strerror(errno)));
+        // [S7] Slot allowlist — delegated to the shared library so the
+        // signer and verifier see the same rule.
+        if (!rpi_verity_sign_is_valid_slot(slot.c_str())) {
+            device->WriteFail("invalid slot name (expected ^system-[a-z0-9]{1,14}$): " + slot);
+            return -1;
         }
-        
-        std::string hash_file = "/persistent/" + device_name + ".verity";
-        
-        // Verify data device exists
+
+        // [S17] Slot/device sanity — if /dev/disk/by-slot/<slot>/system
+        // exists, confirm it resolves to the same block device as the arg.
+        std::string by_slot = "/dev/disk/by-slot/" + slot + "/system";
+        char resolved_by_slot[PATH_MAX];
+        char resolved_dev[PATH_MAX];
+        if (realpath(by_slot.c_str(), resolved_by_slot) != NULL) {
+            if (realpath(data_device.c_str(), resolved_dev) == NULL ||
+                strcmp(resolved_by_slot, resolved_dev) != 0) {
+                device->WriteFail("SLOT_DEVICE_MISMATCH: " + slot +
+                                  " resolves to " + resolved_by_slot +
+                                  " but got " + data_device);
+                return -1;
+            }
+        }
+
+        // Ensure /persistent exists — the shared lib will re-check perms.
+        if (mkdir("/persistent", 0755) != 0 && errno != EEXIST) {
+            device->WriteFail("Failed to create /persistent: " +
+                              std::string(strerror(errno)));
+            return -1;
+        }
+
+        // [S6] Per-slot flock.
+        int flock_fd = acquire_slot_flock(slot);
+        if (flock_fd < 0) {
+            device->WriteFail("FLOCK_FAILED for slot " + slot + ": " +
+                              std::string(strerror(errno)));
+            return -1;
+        }
+        return flock_fd;
+    }
+
+    static bool emit_success(FastbootDevice* device, const std::string& slot,
+                             const uint8_t root_hash[32]) {
+        char hex[65];
+        for (size_t i = 0; i < 32; i++) {
+            snprintf(hex + i * 2, 3, "%02x", root_hash[i]);
+        }
+        device->WriteInfo(std::string("Root hash: ") + hex);
+
+        std::string path = "/persistent/" + slot + ".verity.rhsig";
+        struct stat st;
+        if (stat(path.c_str(), &st) == 0) {
+            device->WriteInfo("Signed blob: " + path + " (" +
+                              std::to_string(st.st_size) + " bytes)");
+        }
+        return device->WriteOkay("dm-verity setup completed");
+    }
+
+    // Wrap a librpi-verity-sign error code + heap-allocated message into
+    // a fastboot FAIL response, and free the message. Returns whatever
+    // WriteFail returns so the handler can `return dispatch_sign_fail(...)`.
+    static bool dispatch_sign_fail(FastbootDevice* device, int rc, char* err) {
+        std::string msg = err ? err : ("rpi_verity_sign_apply rc=" + std::to_string(rc));
+        rpi_verity_sign_free_error(err);
+        if (rc == RPI_VERITY_SIGN_ERR_CRYPTSETUP) {
+            msg = "VERITY_SETUP: " + msg;
+        } else if (rc != RPI_VERITY_SIGN_ERR_OTP_UNSET &&
+                   rc != RPI_VERITY_SIGN_ERR_ARGS) {
+            msg += " — partition state may be inconsistent; reprovision from scratch";
+        }
+        return device->WriteFail(msg);
+    }
+#endif  // HAVE_LIBCRYPTSETUP
+
+    // oem veritysetup <device_name> <slot>
+    //   Computes dm-verity hash for <device_name>, signs the full parameter
+    //   set with the Pi OTP ECDSA key, and persists a blob at
+    //   /persistent/<slot>.verity.rhsig. No rollback on failure — on FAIL
+    //   the operator must reprovision the partition from scratch. [S3]
+    static bool oem_cmd_veritysetup(FastbootDevice* device,
+                                    const std::vector<std::string>& args) {
+#ifndef HAVE_LIBCRYPTSETUP
+        (void)args;
+        return device->WriteFail(
+            "verity signing requires libcryptsetup build; "
+            "rebuild without --no-cryptsetup");
+#else
+        if (args.size() < 4) {
+            return device->WriteFail(
+                "Usage: oem veritysetup <device_name> <slot>");
+        }
+        const std::string device_name = args[2];
+        const std::string slot        = args[3];
+        const std::string data_device = "/dev/" + device_name;
+        const std::string hash_file   = "/persistent/" + device_name + ".verity";
+
         PartitionHandle handle;
         if (!OpenPartition(device, data_device, &handle, O_RDONLY)) {
             return device->WriteFail("Cannot open device " + data_device);
         }
 
-#ifdef HAVE_LIBCRYPTSETUP
-        // Try native libcryptsetup implementation
-        std::string root_hash;
-        std::string error_msg;
-        
-        if (VeritySetupNative(data_device, hash_file, &root_hash, &error_msg)) {
-            device->WriteInfo("Root hash: " + root_hash);
-            device->WriteInfo("Hash stored in: " + hash_file);
-            return device->WriteOkay("dm-verity setup completed");
+        int flock_fd = verity_common_preamble(device, data_device, slot);
+        if (flock_fd < 0) return false;
+        auto flock_guard = std::unique_ptr<int, void (*)(int*)>(
+            &flock_fd, [](int* f) { if (*f >= 0) close(*f); });
+
+        // [S19] Partition mutex: block concurrent flash/erase on the same dev.
+        auto part_guard =
+            rpi::PartitionLockManager::Instance().Acquire(data_device);
+
+        uint8_t root_hash[32] = {0};
+        char* err_msg = nullptr;
+        int rc = rpi_verity_sign_apply(
+            slot.c_str(), data_device.c_str(), hash_file.c_str(),
+            /*data_size_bytes=*/0,  // separate hash device: ignored
+            "/persistent", /*fw_key_id=*/1,
+            root_hash, &err_msg);
+        if (rc != RPI_VERITY_SIGN_OK) {
+            return dispatch_sign_fail(device, rc, err_msg);
         }
-        
-        LOG(WARNING) << "libcryptsetup failed: " << error_msg << ", falling back to veritysetup command";
+        return emit_success(device, slot, root_hash);
 #endif
-
-        // Fallback to veritysetup command
-        char veritysetup[] = "veritysetup";
-        char format_cmd[] = "format";
-        char root_hash_arg[] = "--root-hash-file";
-        
-        std::string root_hash_file = hash_file + ".roothash";
-        
-        char * const argv[] = {
-            veritysetup,
-            format_cmd,
-            root_hash_arg,
-            const_cast<char*>(root_hash_file.c_str()),
-            const_cast<char*>(data_device.c_str()),
-            const_cast<char*>(hash_file.c_str()),
-            NULL
-        };
-
-        int subprocess_rc = -1;
-        int ret = rpi::process_spawn_blocking(&subprocess_rc, "veritysetup", argv, NULL);
-
-        if (ret) {
-            return device->WriteFail("veritysetup spawn failed: " + std::string(strerror(ret)));
-        } else if (subprocess_rc) {
-            return device->WriteFail("veritysetup command failed");
-        }
-        
-        // Read and display the root hash
-        std::string root_hash_content;
-        if (android::base::ReadFileToString(root_hash_file, &root_hash_content)) {
-            // Trim whitespace
-            root_hash_content.erase(root_hash_content.find_last_not_of(" \n\r\t") + 1);
-            device->WriteInfo("Root hash: " + root_hash_content);
-        }
-        
-        device->WriteInfo("Hash stored in: " + hash_file);
-        return device->WriteOkay("dm-verity setup completed");
     }
 
-    // oem verityappend <device_name> <data_size_bytes>
-    // Appends dm-verity hash tree to the end of the same device
-    static bool oem_cmd_verityappend(FastbootDevice* device, const std::vector<std::string>& args) {
-        if (args.size() < 4) {
-            return device->WriteFail("Usage: oem verityappend <device_name> <data_size_bytes>");
+    // oem verityappend <device_name> <data_size_bytes> <slot>
+    //   Appends dm-verity hash tree to the data partition at offset
+    //   data_size_bytes; signs and persists the parameter blob.
+    static bool oem_cmd_verityappend(FastbootDevice* device,
+                                     const std::vector<std::string>& args) {
+#ifndef HAVE_LIBCRYPTSETUP
+        (void)args;
+        return device->WriteFail(
+            "verity signing requires libcryptsetup build; "
+            "rebuild without --no-cryptsetup");
+#else
+        if (args.size() < 5) {
+            return device->WriteFail(
+                "Usage: oem verityappend <device_name> <data_size_bytes> <slot>");
         }
-
-        std::string device_name = args[2];
-        std::string data_device = "/dev/" + device_name;
-        
-        uint64_t data_size;
+        const std::string device_name = args[2];
+        uint64_t data_size = 0;
         if (!android::base::ParseUint(args[3], &data_size)) {
             return device->WriteFail("Invalid data size: " + args[3]);
         }
-        
-        // Verify device exists
+        const std::string slot        = args[4];
+        const std::string data_device = "/dev/" + device_name;
+
         PartitionHandle handle;
         if (!OpenPartition(device, data_device, &handle, O_RDWR)) {
             return device->WriteFail("Cannot open device " + data_device);
         }
-        
-        // Get device size
         uint64_t device_size = android::get_block_device_size(handle.fd());
         if (device_size == 0) {
             return device->WriteFail("Cannot get device size");
         }
-        
-        // Validate data size
         if (data_size > device_size) {
             return device->WriteFail("Data size exceeds device size");
         }
-        
-        device->WriteInfo("Device size: " + std::to_string(device_size) + " bytes");
-        device->WriteInfo("Data size: " + std::to_string(data_size) + " bytes");
-        device->WriteInfo("Hash tree will be appended at offset: " + std::to_string(data_size));
 
-#ifdef HAVE_LIBCRYPTSETUP
-        // Try native libcryptsetup implementation
-        std::string root_hash;
-        std::string error_msg;
-        
-        if (VeritySetupAppendedNative(data_device, data_size, &root_hash, &error_msg)) {
-            device->WriteInfo("Root hash: " + root_hash);
-            device->WriteInfo("Hash tree appended to device");
-            device->WriteInfo("Data blocks: " + std::to_string(data_size / 4096));
-            return device->WriteOkay("dm-verity appended setup completed");
+        int flock_fd = verity_common_preamble(device, data_device, slot);
+        if (flock_fd < 0) return false;
+        auto flock_guard = std::unique_ptr<int, void (*)(int*)>(
+            &flock_fd, [](int* f) { if (*f >= 0) close(*f); });
+
+        auto part_guard =
+            rpi::PartitionLockManager::Instance().Acquire(data_device);
+
+        uint8_t root_hash[32] = {0};
+        char* err_msg = nullptr;
+        int rc = rpi_verity_sign_apply(
+            slot.c_str(), data_device.c_str(), data_device.c_str(),  // appended mode
+            data_size, "/persistent", /*fw_key_id=*/1,
+            root_hash, &err_msg);
+        if (rc != RPI_VERITY_SIGN_OK) {
+            return dispatch_sign_fail(device, rc, err_msg);
         }
-        
-        LOG(WARNING) << "libcryptsetup failed: " << error_msg << ", falling back to veritysetup command";
+        return emit_success(device, slot, root_hash);
 #endif
-
-        // Fallback to veritysetup command with same device
-        return device->WriteFail("veritysetup command fallback not yet implemented for appended mode");
     }
 
     // -------------------------------------------------------------------------

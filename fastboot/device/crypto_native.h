@@ -1,8 +1,9 @@
 #pragma once
 
-#include <string>
+#include <array>
 #include <cstdint>
 #include <optional>
+#include <string>
 
 #ifdef HAVE_LIBCRYPTSETUP
 
@@ -34,11 +35,9 @@ bool CryptSetPasswordNative(const std::string& device_path, const std::string& h
                            const std::string& user_passphrase, bool remove_passphrase,
                            std::string* error_msg);
 
-bool VeritySetupNative(const std::string& data_device, const std::string& hash_device,
-                      std::string* root_hash, std::string* error_msg);
-
-bool VeritySetupAppendedNative(const std::string& device, uint64_t data_size,
-                               std::string* root_hash, std::string* error_msg);
+// NOTE: dm-verity setup + signing now lives in librpi-verity-sign.
+// See <rpi_verity_sign.h>. rpi-fastbootd calls rpi_verity_sign_apply()
+// directly; there is no longer a VeritySetup*Native helper here.
 
 #endif // HAVE_LIBCRYPTSETUP
 
