@@ -1,0 +1,6 @@
+[submodule "third_party/rpi-verity-verifier"]
+	path = third_party/rpi-verity-verifier
+	url = https://github.com/raspberrypi/rpi-verity-verifier.git
+[submodule "third_party/Catch2"]
+	path = third_party/Catch2
+	url = https://github.com/catchorg/Catch2.git
