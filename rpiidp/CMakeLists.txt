@@ -2,31 +2,14 @@ cmake_minimum_required(VERSION 3.15)
 
 project(rpiidp)
 
-# Prefer FetchContent for consistent static linking
-# Fall back to system library if FetchContent unavailable
-option(USE_SYSTEM_JSONCPP "Use system jsoncpp instead of FetchContent" OFF)
-
-if(USE_SYSTEM_JSONCPP)
-   find_package(PkgConfig REQUIRED)
-   pkg_check_modules(JSONCPP REQUIRED jsoncpp)
-   message(STATUS "Using system jsoncpp: ${JSONCPP_LIBRARIES}")
-else()
-   include(FetchContent)
-   FetchContent_Declare(
-      jsoncpp
-      GIT_REPOSITORY https://github.com/open-source-parsers/jsoncpp.git
-      GIT_TAG 1.9.6
-      EXCLUDE_FROM_ALL
-   )
-   set(JSONCPP_WITH_TESTS OFF CACHE INTERNAL "")
-   set(JSONCPP_WITH_PKGCONFIG_SUPPORT OFF CACHE INTERNAL "")
-   set(BUILD_SHARED_LIBS OFF CACHE INTERNAL "")
-   set(BUILD_STATIC_LIBS ON CACHE INTERNAL "")
-   FetchContent_MakeAvailable(jsoncpp)
-   set(JSONCPP_INCLUDE_DIRS ${jsoncpp_SOURCE_DIR}/include)
-   set(JSONCPP_LIBRARIES jsoncpp_static)
-   message(STATUS "Using FetchContent jsoncpp_static: ${JSONCPP_INCLUDE_DIRS}")
-endif()
+# jsoncpp comes from the Debian libjsoncpp-dev package. dh_shlibdeps
+# picks up the runtime dep automatically; declared in debian/control as
+# Build-Depends: libjsoncpp-dev.
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(JSONCPP REQUIRED jsoncpp)
+set(JSONCPP_LIBRARIES "${JSONCPP_LIBRARIES}" CACHE INTERNAL "")
+set(JSONCPP_INCLUDE_DIRS "${JSONCPP_INCLUDE_DIRS}" CACHE INTERNAL "")
+message(STATUS "Using system jsoncpp: ${JSONCPP_LIBRARIES}")
 
 include_directories(${CMAKE_SOURCE_DIR}/include)
 

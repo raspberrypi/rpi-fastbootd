@@ -9,6 +9,7 @@ set(SOURCES
     device/fastboot_device.cpp
     device/flashing.cpp
     device/main.cpp
+    device/partition_lock_manager.cpp
     device/usb.cpp
     device/usb_iouring.cpp
     device/usb_client.cpp
@@ -23,6 +24,26 @@ find_package(PkgConfig REQUIRED)
 pkg_check_modules(FDISK REQUIRED fdisk)
 pkg_check_modules(URING REQUIRED liburing)
 pkg_check_modules(SYSTEMD REQUIRED libsystemd)
+# librpi-verity-sign (signing + blob-format C API) is vendored as a git
+# submodule under third_party/rpi-verity-verifier and statically linked
+# into fastbootd. This avoids a runtime dep on librpi-verity-sign0 and
+# keeps the build hermetic — no apt source for the verifier package
+# required at build time.
+#
+# BUILD_SHARED_LIBS=OFF tells the verifier's CMakeLists to produce a
+# static archive; RPI_VERITY_INSTALL=OFF suppresses its install rules
+# so they don't leak into our cmake_install. EXCLUDE_FROM_ALL keeps the
+# verifier's own binaries (rpi-verity-verify, image-check) out of our
+# default build.
+set(_rpi_verity_dir "${CMAKE_SOURCE_DIR}/third_party/rpi-verity-verifier")
+if(NOT EXISTS "${_rpi_verity_dir}/CMakeLists.txt")
+    message(FATAL_ERROR
+        "rpi-verity-verifier submodule missing at ${_rpi_verity_dir}. "
+        "Run: git submodule update --init --recursive")
+endif()
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+set(RPI_VERITY_INSTALL OFF CACHE BOOL "" FORCE)
+add_subdirectory("${_rpi_verity_dir}" rpi-verity-verifier EXCLUDE_FROM_ALL)
 find_package(rpifwcrypto REQUIRED)
 
 # GPIO control via libgpiod (optional - falls back to command if not available)
@@ -109,7 +130,7 @@ target_compile_options(fastbootd PRIVATE
     ${GPIOD_CFLAGS_OTHER}
     ${CRYPTSETUP_CFLAGS_OTHER}
 )
-target_include_directories(fastbootd PRIVATE 
+target_include_directories(fastbootd PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_LIST_DIR}/../libasyncio/include
     /usr/include/android
@@ -124,7 +145,7 @@ target_include_directories(fastbootd PRIVATE
 )
 
 target_link_directories(fastbootd PRIVATE "/usr/lib/aarch64-linux-gnu/android")
-target_link_libraries(fastbootd PRIVATE 
+target_link_libraries(fastbootd PRIVATE
     libsparse
     ${ZLIB_LIBRARIES}
     ${FDISK_LIBRARIES}
@@ -140,7 +161,8 @@ target_link_libraries(fastbootd PRIVATE
     base
     rpiparted
     rpiidp
-    jsoncpp_static
+    ${JSONCPP_LIBRARIES}
+    rpi_verity_sign
 )
 
 # Define install, packaging, signing tasks

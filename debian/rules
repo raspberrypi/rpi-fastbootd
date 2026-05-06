@@ -3,9 +3,15 @@
 # Preserve cmake-based build system
 export DH_VERBOSE = 1
 
-# Allow network access for CMake FetchContent fallback
-# (Only used if system jsoncpp is not available)
-export DEB_BUILD_OPTIONS += network
+# Third-party deps come from two places:
+#  - Debian packages declared in Build-Depends (jsoncpp via libjsoncpp-dev).
+#  - Git submodules under third_party/, packaged into the source tarball
+#    by gbp (gbp.conf: submodules=True): rpi-verity-verifier (signer
+#    library), Catch2 (tests, off in deb builds).
+# The build is hermetic — no network needed at configure or compile
+# time. FETCHCONTENT_FULLY_DISCONNECTED=ON is a guardrail: if anything
+# new ever tries FetchContent it'll fail loudly inside sbuild rather
+# than silently reach for the internet.
 
 # Generate changelog before any build steps
 .PHONY: generate-changelog
@@ -23,14 +29,14 @@ override_dh_auto_configure:
 		dh_auto_configure -- \
 			-DCMAKE_BUILD_TYPE=Release \
 			-DBUILD_TESTING=OFF \
-			-DFETCHCONTENT_FULLY_DISCONNECTED=OFF \
+			-DFETCHCONTENT_FULLY_DISCONNECTED=ON \
 			-DSKIP_CRYPTSETUP=ON; \
 	else \
 		echo "Building WITH libcryptsetup (GPLv2+/GPLv3 license)"; \
 		dh_auto_configure -- \
 			-DCMAKE_BUILD_TYPE=Release \
 			-DBUILD_TESTING=OFF \
-			-DFETCHCONTENT_FULLY_DISCONNECTED=OFF; \
+			-DFETCHCONTENT_FULLY_DISCONNECTED=ON; \
 	fi
 
 override_dh_auto_install:

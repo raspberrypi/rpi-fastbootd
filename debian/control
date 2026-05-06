@@ -16,6 +16,7 @@ Build-Depends: debhelper-compat (= 13),
                libgpiod-dev,
                libcryptsetup-dev [!nocryptsetup],
                librpifwcrypto-dev,
+               libjsoncpp-dev,
                git
 Standards-Version: 4.7.2
 Homepage: https://www.raspberrypi.com/
