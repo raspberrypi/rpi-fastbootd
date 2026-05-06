@@ -14,6 +14,15 @@ if [ ! -f "debian/control" ]; then
     exit 1
 fi
 
+# Ensure git submodules (e.g. third_party/rpi-verity-verifier) are populated.
+# Skipped when not in a git checkout — sbuild unpacks a self-contained source
+# tarball produced by `gbp buildpackage` (gbp.conf has submodules=True), so
+# the submodule content is already on disk in that case.
+if [ -d .git ] || git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    echo "Updating git submodules..."
+    git submodule update --init --recursive
+fi
+
 # Parse options
 BUILD_TYPE="default"
 UNSIGNED="-uc -us"
@@ -90,8 +99,9 @@ echo
 echo "========================================"
 echo "Building package..."
 echo "========================================"
-echo "Note: Network access enabled for CMake FetchContent"
-echo "      (Downloads jsoncpp v1.9.6 for static linking)"
+echo "Build is hermetic — jsoncpp from libjsoncpp-dev (apt), other"
+echo "third-party deps as git submodules under third_party/"
+echo "(rpi-verity-verifier, Catch2). No network at configure/compile."
 echo
 dpkg-buildpackage -b ${UNSIGNED} -j$(nproc)
 

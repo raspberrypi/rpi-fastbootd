@@ -5,16 +5,19 @@ project(fastboot_device_tests)
 # Enable testing
 enable_testing()
 
-# Fetch Catch2 if not already available
-include(FetchContent)
-
-FetchContent_Declare(
-    Catch2
-    GIT_REPOSITORY https://github.com/catchorg/Catch2.git
-    GIT_TAG        v3.11.0  # Latest stable v3 release (requires C++14)
-)
-
-FetchContent_MakeAvailable(Catch2)
+# Catch2 is vendored as a git submodule under third_party/Catch2 so the
+# test build is hermetic — no network at configure or sbuild time. Tests
+# are gated behind BUILD_TESTING (off in production deb builds), so this
+# only matters for CI runs that opt in.
+set(_catch2_dir "${CMAKE_SOURCE_DIR}/third_party/Catch2")
+if(NOT EXISTS "${_catch2_dir}/CMakeLists.txt")
+    message(FATAL_ERROR
+        "Catch2 submodule missing at ${_catch2_dir}.\n"
+        "Run: git submodule update --init --recursive\n"
+        "Or disable tests: -DBUILD_TESTING=OFF")
+endif()
+add_subdirectory("${_catch2_dir}" Catch2 EXCLUDE_FROM_ALL)
+set(catch2_SOURCE_DIR "${_catch2_dir}")
 
 # Kernel log (klogctl) tests
 add_executable(kernel_log_test kernel_log_test.cpp)
