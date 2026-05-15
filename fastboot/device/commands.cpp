@@ -1617,20 +1617,27 @@ ssize_t bulk_write(int bulk_in, const char *buf, size_t length)
                 return device->WriteOkay("Key is not provisioned");
             }
         } else if (subcommand == "init") {
-            // Match upstream rpi-fw-crypto's `cmd_genkey` pattern: trust the
-            // firmware to enforce OTP invariants (KEY_NOT_BLANK if the slot
-            // is occupied, KEY_LOCKED if locked). Only short-circuit on the
-            // "already provisioned" case when we can read status cleanly —
-            // otherwise fall through and let ProvisionKey speak for itself.
-            // This avoids refusing first-time provisioning purely because
-            // the cached status read failed (e.g. firmware lacks the
-            // get_key_status tag).
+            // Idempotent: the caller's intent is "ensure a device key
+            // exists", not "force-generate". Already-provisioned is success.
+            //
+            // Match upstream rpi-fw-crypto's `cmd_genkey` pattern by trusting
+            // the firmware to enforce OTP invariants. We catch the
+            // already-provisioned state in two places: the cached status
+            // (when readable) for the fast path, and KEY_NOT_BLANK from
+            // ProvisionKey() for the fallback when the cached read failed.
+            // Both report OKAY so the caller doesn't need to parse error
+            // strings to tell "the key is there" apart from "I failed to
+            // put one there."
             auto status = crypto.GetCachedProvisioningStatus();
             if (status && *status) {
-                return device->WriteFail("Key is already provisioned");
+                return device->WriteOkay("Key already provisioned");
             }
 
             int result = crypto.ProvisionKey();
+            if (result == RPI_FW_CRYPTO_KEY_NOT_BLANK) {
+                crypto.RefreshProvisioningStatus();
+                return device->WriteOkay("Key already provisioned");
+            }
             if (result != 0) {
                 return device->WriteFail(
                     std::string("Failed to provision key: ") +
