@@ -33,6 +33,7 @@
 #include <sparse/sparse.h>
 
 #include "fastboot_device.h"
+#include "partition_lock_manager.h"
 #include "utility.h"
 
 using namespace std::literals;
@@ -188,6 +189,9 @@ int Flash(FastbootDevice* device, const std::string& partition_name, std::string
     PartitionHandle handle;
     auto partition_path = partition_name;
     partition_path.insert(0, "/dev/");
+    // Belt-and-braces with the kernel's O_EXCL: serialise concurrent flashes
+    // to the same partition across USB and TCP workers (`-i usb+tcp` mode).
+    auto part_guard = rpi::PartitionLockManager::Instance().Acquire(partition_path);
     if (!OpenPartition(device, partition_path, &handle, O_WRONLY | O_DIRECT)) {
         LOG(ERROR) << "Cannot flash partition " << partition_path << " as failed to access";
         SetErr(err, "cannot access partition " + partition_path +

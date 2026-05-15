@@ -17,12 +17,15 @@
 #include "commands.h"
 
 #include <inttypes.h>
+#include <limits.h>
 #include <linux/fs.h>
+#include <sys/file.h>
 #include <sys/ioctl.h>
 #include <sys/mount.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/un.h>
+#include <unistd.h>
 
 #include <algorithm>
 #include <unordered_set>
@@ -42,13 +45,14 @@
 // Crypto operations via libcryptsetup (conditional compilation)
 #ifdef HAVE_LIBCRYPTSETUP
 #include "crypto_native.h"
+#include <rpi_verity_sign.h>
 #endif
+#include "partition_lock_manager.h"
 #include <uuid/uuid.h>
 
 #include "constants.h"
 #include "fastboot_device.h"
 #include "flashing.h"
-#include "shared_idp.h"
 #include "utility.h"
 #include "storage_literals.h"
 #include "rpiparted.h"
@@ -203,6 +207,8 @@ const std::unordered_map<std::string, VariableHandlers> kVariableMap = {
         {FB_VAR_BLOCK_DEVICES, {GetBlockDevices, nullptr}},
         {FB_VAR_BLOCK_DEVICE_SIZE, {GetBlockDeviceSize, GetAllBlockDeviceArgs}},
         {FB_VAR_BLOCK_DEVICE_TYPE, {GetBlockDeviceType, GetAllBlockDeviceArgs}},
+        {FB_VAR_TCP_DATA_PLANE_ONLY, {GetTcpDataPlaneOnly, nullptr}},
+        {FB_VAR_OTP_LOCK_STATUS, {GetOtpLockStatus, nullptr}},
 };
 
 static bool GetVarAll(FastbootDevice* device) {
@@ -376,6 +382,21 @@ bool GetVarHandler(FastbootDevice* device, const std::vector<std::string>& args)
     return device->WriteOkay(message);
 }
 
+bool GetVarHandlerDataPlane(FastbootDevice* device, const std::vector<std::string>& args) {
+    // The upstream fastboot CLI handshakes by issuing `getvar:version` on
+    // every fresh connection. Answer that one variable so flashes from a
+    // standard client work, and reject anything else so control-plane
+    // queries don't slip through onto a data-plane worker.
+    if (args.size() < 2 || args[1] != FB_VAR_VERSION) {
+        return device->WriteFail("data-plane connection: only getvar:version is permitted");
+    }
+    std::string message;
+    if (!GetVersion(device, {}, &message)) {
+        return device->WriteFail("internal: GetVersion failed");
+    }
+    return device->WriteOkay(message);
+}
+
 bool EraseHandler(FastbootDevice* device, const std::vector<std::string>& args) {
     if (args.size() < 2) {
         return device->WriteStatus(FastbootResult::FAIL, "Invalid arguments");
@@ -515,15 +536,6 @@ namespace {
           return device->WriteFail("IDP:No data. Check description was staged");
        }
 
-       // Shared context (multi-connection TCP mode)
-       if (device->shared_idp) {
-          if (!device->shared_idp->Initialize(ptr_data, size)) {
-             return device->WriteFail("IDP:already initialised or invalid description");
-          }
-          return device->WriteOkay("IDP:ready");
-       }
-
-       // Per-device IDP (USB / legacy TCP)
        if (device->idp) {
           return device->WriteFail("IDP:already initialised");
        }
@@ -548,15 +560,6 @@ namespace {
 
     // oem idpwrite
     static bool oem_cmd_idp_write(FastbootDevice* device, const std::vector<std::string>& unused) {
-
-       // Shared context (multi-connection TCP mode)
-       if (device->shared_idp) {
-          if (!device->shared_idp->StartProvision()) {
-             return device->WriteFail("IDP:failed to start provisioning");
-          }
-          return device->WriteOkay("IDP:ok");
-       }
-
        if (!device->idp) {
           return device->WriteFail("IDP:not initialised");
        }
@@ -571,21 +574,15 @@ namespace {
 
     // oem idpgetblk
     static bool oem_cmd_idp_getblk(FastbootDevice* device, const std::vector<std::string>& unused) {
-       std::optional<IDPblockDevice> bd;
-
-       // Shared context: thread-safe partition claiming
-       if (device->shared_idp) {
-          bd = device->shared_idp->ClaimNextPartition();
-       } else {
-          if (!device->idp) {
-             return device->WriteFail("IDP:not initialised");
-          }
-          if (device->idp->getState() != IDPdevice::IDPstate::Partitioned) {
-             return device->WriteFail("IDP:not partitioned (state " +
-                    std::to_string(static_cast<int>(device->idp->getState())) + ")");
-          }
-          bd = device->idp->getNextBlockDevice(*device->idpcookie);
+       if (!device->idp) {
+          return device->WriteFail("IDP:not initialised");
        }
+       if (device->idp->getState() != IDPdevice::IDPstate::Partitioned) {
+          return device->WriteFail("IDP:not partitioned (state " +
+                 std::to_string(static_cast<int>(device->idp->getState())) + ")");
+       }
+       std::optional<IDPblockDevice> bd =
+              device->idp->getNextBlockDevice(*device->idpcookie);
 
        if (bd) {
           std::string blk = bd->blockDev;
@@ -602,14 +599,6 @@ namespace {
 
     // oem idpdone
     static bool oem_cmd_idp_done(FastbootDevice* device, const std::vector<std::string>& unused) {
-       // Shared context (multi-connection TCP mode)
-       if (device->shared_idp) {
-          if (!device->shared_idp->EndProvision()) {
-             return device->WriteFail("IDP:error finalising");
-          }
-          return device->WriteOkay("IDP:done");
-       }
-
        if (!device->idp) {
           return device->WriteOkay("IDP:not initialised");
        }

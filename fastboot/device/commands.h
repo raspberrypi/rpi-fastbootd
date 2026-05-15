@@ -42,6 +42,9 @@ bool RebootBootloaderHandler(FastbootDevice* device, const std::vector<std::stri
 // bool RebootFastbootHandler(FastbootDevice* device, const std::vector<std::string>& args);
 // bool RebootRecoveryHandler(FastbootDevice* device, const std::vector<std::string>& args);
 bool GetVarHandler(FastbootDevice* device, const std::vector<std::string>& args);
+// Data-plane variant: answers `getvar:version` (needed for the host fastboot
+// CLI's connection handshake) and FAILs every other variable.
+bool GetVarHandlerDataPlane(FastbootDevice* device, const std::vector<std::string>& args);
 bool EraseHandler(FastbootDevice* device, const std::vector<std::string>& args);
 bool FlashHandler(FastbootDevice* device, const std::vector<std::string>& args);
 bool UploadHandler(FastbootDevice* device, const std::vector<std::string>& args);

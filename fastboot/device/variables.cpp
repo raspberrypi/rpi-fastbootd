@@ -20,6 +20,7 @@
 #include <cstring>
 #include <dirent.h>
 #include <fstream>
+#include <mutex>
 #include <sstream>
 #include <inttypes.h>
 #include <stdio.h>
@@ -74,9 +75,50 @@ using namespace std::string_literals;
 
 constexpr char kFastbootProtocolVersion[] = "0.4";
 
+// Set once at daemon startup from main(): true when -i usb+tcp split mode is
+// active, so getvar tcp-data-plane-only can advertise it to the host.
+namespace {
+bool g_tcp_data_plane_only_mode = false;
+
+// Default "ok" so devices that never reach the lock pass (no usb transport
+// brought up yet) are not considered unsafe. main() overwrites this once
+// the lock pass actually runs.
+std::string g_otp_lock_status = "ok";
+std::mutex g_otp_lock_status_mutex;
+}  // namespace
+
+void SetTcpDataPlaneOnlyMode(bool enabled) {
+    g_tcp_data_plane_only_mode = enabled;
+}
+
+void SetOtpLockStatus(std::string status) {
+    std::lock_guard<std::mutex> g(g_otp_lock_status_mutex);
+    g_otp_lock_status = std::move(status);
+}
+
+bool IsOtpLockStatusSafe() {
+    std::lock_guard<std::mutex> g(g_otp_lock_status_mutex);
+    return g_otp_lock_status == "ok" || g_otp_lock_status == "not-provisioned";
+}
+
 bool GetVersion(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
                 std::string* message) {
     *message = kFastbootProtocolVersion;
+    return true;
+}
+
+bool GetTcpDataPlaneOnly(FastbootDevice* /* device */,
+                         const std::vector<std::string>& /* args */,
+                         std::string* message) {
+    *message = g_tcp_data_plane_only_mode ? "yes" : "no";
+    return true;
+}
+
+bool GetOtpLockStatus(FastbootDevice* /* device */,
+                     const std::vector<std::string>& /* args */,
+                     std::string* message) {
+    std::lock_guard<std::mutex> g(g_otp_lock_status_mutex);
+    *message = g_otp_lock_status;
     return true;
 }
 
@@ -1801,6 +1843,16 @@ bool GetPubkey(FastbootDevice* /* device */, const std::vector<std::string>& /* 
 
 bool GetPrivkey(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
     std::string* message) {
+    // Belt-and-braces: the startup OTP-lock pass is what gives us the
+    // firmware-level guarantee that the raw private key cannot be exported.
+    // If that pass failed (or never ran), refuse here even though the
+    // provisioned-status check below would normally catch it. See
+    // FB_VAR_OTP_LOCK_STATUS for the failure-mode taxonomy.
+    if (!IsOtpLockStatusSafe()) {
+        *message = "refused (otp-lock-status not safe)";
+        return true;
+    }
+
     rpi::RpiFwCrypto crypto;
 
     // Check if key is provisioned using cached status

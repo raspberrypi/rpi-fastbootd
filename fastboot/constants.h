@@ -123,3 +123,17 @@
 #define FB_VAR_BLOCK_DEVICE_SIZE "block-device-size"
 #define FB_VAR_BLOCK_DEVICE_TYPE "block-device-type"
 
+// "yes" when the daemon serves a USB control plane and a separate
+// data-plane-only TCP listener (-i usb+tcp). The host should keep all
+// non-flash commands on USB and only swap to tcp:<addr> for `flash`.
+#define FB_VAR_TCP_DATA_PLANE_ONLY "tcp-data-plane-only"
+
+// Diagnostic for the startup OTP-lock pass. Values:
+//   "ok"               — slot is LOCKED (or was already LOCKED at boot).
+//   "not-provisioned"  — no key has been written to OTP yet, nothing to lock.
+//   "lock-failed:<rc>" — provisioned slot was unlocked and LockKey() returned
+//                        non-zero rc; raw-private-key export remains refused
+//                        until the next boot.
+//   "read-failed:<rc>" — could not read the key slot status at startup.
+#define FB_VAR_OTP_LOCK_STATUS "otp-lock-status"
+
