@@ -2,7 +2,11 @@
 
 set -e
 
-UDC="$(ls /sys/class/udc)"
+# Shell glob instead of `ls /sys/class/udc` — the fastboot gadget image strips
+# /usr/bin/ls (see pi-gen-micro fastboot delete.list) to keep the rootfs small.
+set -- /sys/class/udc/*
+UDC="${1##*/}"
+
 >&2 echo "Found UDC ${UDC}"
 echo "${UDC}" > UDC
 >&2 echo "Attached UDC ${UDC}"
