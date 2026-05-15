@@ -1906,26 +1906,54 @@ bool ShutDownHandler(FastbootDevice* device, const std::vector<std::string>& /* 
     return result;
 }
 
+// Hand the reboot off to systemd so units stop, filesystems unmount, and the
+// reboot(2) call is made by PID 1. If `arg` is non-null it is passed through
+// to systemctl, which forwards it as the LINUX_REBOOT_CMD_RESTART2 string —
+// the Pi bootloader inspects this to select alternate boot modes.
+static bool TriggerSystemdReboot(const char* arg) {
+    pid_t pid = fork();
+    if (pid < 0) {
+        PLOG(ERROR) << "fork() failed in reboot handler";
+        return false;
+    }
+    if (pid == 0) {
+        if (arg != nullptr) {
+            execlp("systemctl", "systemctl", "reboot", arg, nullptr);
+        } else {
+            execlp("systemctl", "systemctl", "reboot", nullptr);
+        }
+        PLOG(ERROR) << "execlp(systemctl reboot) failed";
+        _exit(127);
+    }
+    return true;
+}
+
 bool RebootHandler(FastbootDevice* device, const std::vector<std::string>& /* args */) {
     auto result = device->WriteStatus(FastbootResult::OKAY, "Rebooting");
-    // android::base::SetProperty(ANDROID_RB_PROPERTY, "reboot,from_fastboot");
     device->CloseDevice();
+    if (!TriggerSystemdReboot(nullptr)) {
+        return false;
+    }
     TEMP_FAILURE_RETRY(pause());
     return result;
 }
 
 bool RebootBootloaderHandler(FastbootDevice* device, const std::vector<std::string>& /* args */) {
     auto result = device->WriteStatus(FastbootResult::OKAY, "Rebooting bootloader");
-    // android::base::SetProperty(ANDROID_RB_PROPERTY, "reboot,bootloader");
     device->CloseDevice();
+    if (!TriggerSystemdReboot("bootloader")) {
+        return false;
+    }
     TEMP_FAILURE_RETRY(pause());
     return result;
 }
 
 bool RebootFastbootHandler(FastbootDevice* device, const std::vector<std::string>& /* args */) {
     auto result = device->WriteStatus(FastbootResult::OKAY, "Rebooting fastboot");
-    // android::base::SetProperty(ANDROID_RB_PROPERTY, "reboot,fastboot");
     device->CloseDevice();
+    if (!TriggerSystemdReboot("fastboot")) {
+        return false;
+    }
     TEMP_FAILURE_RETRY(pause());
     return result;
 }
