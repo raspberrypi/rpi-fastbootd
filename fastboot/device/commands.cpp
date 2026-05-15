@@ -1628,20 +1628,24 @@ ssize_t bulk_write(int bulk_in, const char *buf, size_t length)
                 return device->WriteOkay("Key is not provisioned");
             }
         } else if (subcommand == "init") {
-            // Check if key is already provisioned
+            // Match upstream rpi-fw-crypto's `cmd_genkey` pattern: trust the
+            // firmware to enforce OTP invariants (KEY_NOT_BLANK if the slot
+            // is occupied, KEY_LOCKED if locked). Only short-circuit on the
+            // "already provisioned" case when we can read status cleanly —
+            // otherwise fall through and let ProvisionKey speak for itself.
+            // This avoids refusing first-time provisioning purely because
+            // the cached status read failed (e.g. firmware lacks the
+            // get_key_status tag).
             auto status = crypto.GetCachedProvisioningStatus();
-            if (!status) {
-                return device->WriteFail("Failed to get key status");
-            }
-
-            if (*status) {
+            if (status && *status) {
                 return device->WriteFail("Key is already provisioned");
             }
 
-            // Provision the key
             int result = crypto.ProvisionKey();
-            if (result == 0) {
-                return device->WriteFail("Failed to provision key");
+            if (result != 0) {
+                return device->WriteFail(
+                    std::string("Failed to provision key: ") +
+                    rpi_fw_crypto_strerror(static_cast<RPI_FW_CRYPTO_STATUS>(result)));
             }
             // Re-query and update the cached status so subsequent
             // checks (e.g. IDP canProvision) see the new key.
@@ -1675,11 +1679,12 @@ ssize_t bulk_write(int bulk_in, const char *buf, size_t length)
                     "Usage: oem fwcrypto sign-hash <64-char-hex-sha256-digest>");
             }
 
-            // Verify key is provisioned
-            auto status = crypto.GetCachedProvisioningStatus();
-            if (!status || !*status) {
-                return device->WriteFail("No firmware crypto key provisioned");
-            }
+            // Match upstream rpi-fw-crypto's `cmd_sign` pattern: no userspace
+            // pre-check. If the key isn't provisioned (or status is
+            // unreadable), the firmware ecdsa_sign call below will return
+            // KEY_NOT_SET / KEY_NOT_FOUND and we report that verbatim via the
+            // strerror path. This avoids refusing signing purely because the
+            // cached status read failed.
 
             const std::string& hex_digest = args[3];
             if (hex_digest.length() != 64) {
