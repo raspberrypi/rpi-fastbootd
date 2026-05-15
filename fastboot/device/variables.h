@@ -152,6 +152,33 @@ bool GetPubkey(FastbootDevice* /* device */, const std::vector<std::string>& /* 
 bool GetPrivkey(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
     std::string* message);
 
+// Returns "yes" iff the daemon is running in -i usb+tcp split mode (so the
+// host should keep all non-flash traffic on USB and only swap to tcp:<addr>
+// for the actual `flash` data upload). "no" otherwise.
+bool GetTcpDataPlaneOnly(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
+    std::string* message);
+
+// Called once from main() to record whether the daemon is running in
+// -i usb+tcp split mode; the value is reflected by GetTcpDataPlaneOnly.
+void SetTcpDataPlaneOnlyMode(bool enabled);
+
+// Reports the result of the startup OTP-lock attempt — see
+// FB_VAR_OTP_LOCK_STATUS in constants.h for the value alphabet.
+bool GetOtpLockStatus(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
+    std::string* message);
+
+// Records the outcome of the startup OTP-lock attempt. Called once from
+// main() after the USB transport has written its FunctionFS descriptors,
+// so a failure here does not prevent the gadget from enumerating to the
+// host. Reflected by GetOtpLockStatus / IsOtpLockStatusSafe.
+void SetOtpLockStatus(std::string status);
+
+// True iff the cached OTP lock status is one we consider "safe" for
+// raw-private-key handlers — locked, or no key provisioned. False on
+// "lock-failed:*" / "read-failed:*"; in that case GetPrivkey refuses
+// rather than risk handing out an exportable key.
+bool IsOtpLockStatusSafe();
+
 // Block device enumeration
 bool GetBlockDevices(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
     std::string* message);

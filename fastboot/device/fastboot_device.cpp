@@ -50,6 +50,17 @@ std::unordered_map<std::string, CommandHandler> FastbootDevice::BuildCommandMap(
     };
 }
 
+// Restricted map for TCP workers running alongside a USB control plane.
+// Only download/flash plus a version-gated getvar (needed for the upstream
+// `fastboot` CLI's connection handshake) are allowed; everything else FAILs.
+std::unordered_map<std::string, CommandHandler> FastbootDevice::BuildDataPlaneCommandMap() {
+    return {
+              {FB_CMD_DOWNLOAD, DownloadHandler},
+              {FB_CMD_FLASH, FlashHandler},
+              {FB_CMD_GETVAR, GetVarHandlerDataPlane},
+    };
+}
+
 FastbootDevice::FastbootDevice(const char* mode)
     : kCommandMap(BuildCommandMap()),
       active_slot_("") {
@@ -62,9 +73,8 @@ FastbootDevice::FastbootDevice(const char* mode)
 }
 
 FastbootDevice::FastbootDevice(std::unique_ptr<Transport> transport,
-                               std::shared_ptr<SharedIDPContext> shared_idp_ctx)
-    : kCommandMap(BuildCommandMap()),
-      shared_idp(std::move(shared_idp_ctx)),
+                               bool data_plane_only)
+    : kCommandMap(data_plane_only ? BuildDataPlaneCommandMap() : BuildCommandMap()),
       transport_(std::move(transport)),
       active_slot_("") {}
 
