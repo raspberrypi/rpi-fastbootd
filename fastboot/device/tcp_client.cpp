@@ -103,8 +103,12 @@ ssize_t ClientTcpTransport::Read(void* data, size_t len) {
         while (message_bytes_left_ == 0) {
             if (socket_ == nullptr) {
                 if (!service_) {
-                    // Pre-connected socket disconnected; no server to re-accept from.
-                    return -1;
+                    // Pre-connected socket worker (split-mode TCP data plane)
+                    // whose peer has closed. This is the normal end of a
+                    // session — return 0 (EOF) so ExecuteCommands can log
+                    // it as a clean disconnect rather than PLOG'ing a stale
+                    // errno from the last syscall.
+                    return 0;
                 }
                 ListenFastbootSocket();
             }
@@ -115,7 +119,7 @@ ssize_t ClientTcpTransport::Read(void* data, size_t len) {
             } else {
                 // If connection is closed by host, Receive will return 0 immediately.
                 socket_.reset(nullptr);
-                // In DATA phase, return error.
+                // In DATA phase, a mid-transfer close is a real error.
                 if (downloading_) {
                     return -1;
                 }

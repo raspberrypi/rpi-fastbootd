@@ -158,7 +158,13 @@ void FastbootDevice::ExecuteCommands() {
     char command[FB_RESPONSE_SZ + 1];
     for (;;) {
         auto bytes_read = transport_->Read(command, FB_RESPONSE_SZ);
-        if (bytes_read == -1) {
+        if (bytes_read == 0) {
+            // Clean peer disconnect between commands — normal end of a
+            // fastboot session, not an error worth alarming on.
+            LOG(INFO) << "Peer closed connection; ending session";
+            return;
+        }
+        if (bytes_read < 0) {
             PLOG(ERROR) << "Couldn't read command";
             return;
         }
