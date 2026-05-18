@@ -383,18 +383,33 @@ bool GetVarHandler(FastbootDevice* device, const std::vector<std::string>& args)
 }
 
 bool GetVarHandlerDataPlane(FastbootDevice* device, const std::vector<std::string>& args) {
-    // The upstream fastboot CLI handshakes by issuing `getvar:version` on
-    // every fresh connection. Answer that one variable so flashes from a
-    // standard client work, and reject anything else so control-plane
-    // queries don't slip through onto a data-plane worker.
-    if (args.size() < 2 || args[1] != FB_VAR_VERSION) {
-        return device->WriteFail("data-plane connection: only getvar:version is permitted");
+    // The upstream fastboot CLI handshakes by issuing `getvar:version`, then
+    // queries `max-download-size` to decide its sparse-chunk limit. Without
+    // an answer to the latter the client falls back to "unlimited" and ships
+    // the whole partition in one download, which DownloadHandler rejects via
+    // ParseUint against kMaxDownloadSizeDefault — surfacing on the serial
+    // console as "Couldn't read command: Numerical result out of range"
+    // (ParseUint sets errno=ERANGE on overflow, and the next Read sees a
+    // closed socket without clearing it). Anything beyond these two is still
+    // refused so control-plane queries can't slip through.
+    if (args.size() < 2) {
+        return device->WriteFail("data-plane connection: getvar requires a variable name");
     }
+    const std::string& name = args[1];
     std::string message;
-    if (!GetVersion(device, {}, &message)) {
-        return device->WriteFail("internal: GetVersion failed");
+    if (name == FB_VAR_VERSION) {
+        if (!GetVersion(device, {}, &message)) {
+            return device->WriteFail("internal: GetVersion failed");
+        }
+        return device->WriteOkay(message);
     }
-    return device->WriteOkay(message);
+    if (name == FB_VAR_MAX_DOWNLOAD_SIZE) {
+        if (!GetMaxDownloadSize(device, {}, &message)) {
+            return device->WriteFail("internal: GetMaxDownloadSize failed");
+        }
+        return device->WriteOkay(message);
+    }
+    return device->WriteFail("data-plane connection: getvar " + name + " not permitted");
 }
 
 bool EraseHandler(FastbootDevice* device, const std::vector<std::string>& args) {
