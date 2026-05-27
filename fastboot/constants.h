@@ -105,6 +105,14 @@
 #define FB_VAR_SIGNED_OTP "secure-otp"
 #define FB_VAR_SIGNED_DEVKEY "secure-devkey"
 
+#define FB_VAR_EEPROM_DEVICE "eeprom-device"
+#define FB_VAR_EEPROM_SIZE "eeprom-size"
+#define FB_VAR_EEPROM_SHA256 "eeprom-sha256"
+#define FB_VAR_EEPROM_JEDEC "eeprom-jedec"
+#define FB_VAR_EEPROM_UNIQUE_ID "eeprom-unique-id"
+#define FB_VAR_EEPROM_SPI_SPEED "eeprom-spi-speed"
+#define FB_VAR_BOOTLOADER_BUILD_TIMESTAMP "bootloader-build-timestamp"
+
 #define FB_VAR_IPV4_ADDRESS "ipv4-address"
 #define FB_VAR_IPV4_GATEWAY "ipv4-gateway"
 #define FB_VAR_IPV4_NETMASK "ipv4-netmask"

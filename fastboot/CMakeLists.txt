@@ -6,6 +6,7 @@ set(COMMON_CPPFLAGS
 
 set(SOURCES
     device/commands.cpp
+    device/eeprom.cpp
     device/fastboot_device.cpp
     device/flashing.cpp
     device/main.cpp
@@ -48,6 +49,10 @@ find_package(rpifwcrypto REQUIRED)
 
 # GPIO control via libgpiod (optional - falls back to command if not available)
 pkg_check_modules(GPIOD libgpiod>=2.0)
+
+# In-process SPI flash access for bootloader EEPROM updates (optional - the
+# oem eeprom-* commands report a clean error if not available).
+pkg_check_modules(FLASHROM flashrom)
 
 # Crypto operations via libcryptsetup (optional - falls back to command if not available)
 option(SKIP_CRYPTSETUP "Skip libcryptsetup for Apache 2.0 licensing" OFF)
@@ -106,6 +111,14 @@ else()
     message(STATUS "libgpiod not found - will use gpioset command fallback")
 endif()
 
+# Define HAVE_LIBFLASHROM if libflashrom is available
+if(FLASHROM_FOUND)
+    message(STATUS "libflashrom found - enabling in-process EEPROM update")
+    target_compile_definitions(fastbootd PRIVATE HAVE_LIBFLASHROM)
+else()
+    message(STATUS "libflashrom not found - oem eeprom-* commands will return errors")
+endif()
+
 # Define HAVE_LIBCRYPTSETUP if libcryptsetup is available
 if(SKIP_CRYPTSETUP)
     message(STATUS "libcryptsetup SKIPPED - using cryptsetup command fallback (Apache 2.0 license)")
@@ -129,6 +142,7 @@ target_compile_options(fastbootd PRIVATE
     ${SYSTEMD_CFLAGS_OTHER}
     ${GPIOD_CFLAGS_OTHER}
     ${CRYPTSETUP_CFLAGS_OTHER}
+    ${FLASHROM_CFLAGS_OTHER}
 )
 target_include_directories(fastbootd PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
@@ -140,6 +154,7 @@ target_include_directories(fastbootd PRIVATE
     ${SYSTEMD_INCLUDE_DIRS}
     ${GPIOD_INCLUDE_DIRS}
     ${CRYPTSETUP_INCLUDE_DIRS}
+    ${FLASHROM_INCLUDE_DIRS}
     ${RPIFWCRYPTO_INCLUDE_DIRS}
     ${CMAKE_CURRENT_LIST_DIR}/../rpiparted/include
 )
@@ -153,6 +168,7 @@ target_link_libraries(fastbootd PRIVATE
     ${SYSTEMD_LIBRARIES}
     ${GPIOD_LIBRARIES}
     ${CRYPTSETUP_LIBRARIES}
+    ${FLASHROM_LIBRARIES}
     ${RPIFWCRYPTO_LIBRARIES}
     OpenSSL::Crypto
     asyncio
