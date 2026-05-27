@@ -119,6 +119,20 @@ bool GetSignedDevkey(FastbootDevice* /* device */, const std::vector<std::string
     std::string* message);
 bool GetSignedOtp(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
     std::string* message);
+bool GetEepromDevice(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
+    std::string* message);
+bool GetEepromSize(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
+    std::string* message);
+bool GetEepromSha256(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
+    std::string* message);
+bool GetEepromJedec(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
+    std::string* message);
+bool GetEepromUniqueId(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
+    std::string* message);
+bool GetEepromSpiSpeed(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
+    std::string* message);
+bool GetBootloaderBuildTimestamp(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
+    std::string* message);
 
 // IP address information
 bool GetIpv4Address(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,

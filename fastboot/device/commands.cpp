@@ -51,6 +51,7 @@
 #include <uuid/uuid.h>
 
 #include "constants.h"
+#include "eeprom.h"
 #include "fastboot_device.h"
 #include "flashing.h"
 #include "utility.h"
@@ -193,6 +194,13 @@ const std::unordered_map<std::string, VariableHandlers> kVariableMap = {
         {FB_VAR_SIGNED_EEPROM, {GetSignedEeprom, nullptr}},
         {FB_VAR_SIGNED_OTP, {GetSignedOtp, nullptr}},
         {FB_VAR_SIGNED_DEVKEY, {GetSignedDevkey, nullptr}},
+        {FB_VAR_EEPROM_DEVICE, {GetEepromDevice, nullptr}},
+        {FB_VAR_EEPROM_SIZE, {GetEepromSize, nullptr}},
+        {FB_VAR_EEPROM_SHA256, {GetEepromSha256, nullptr}},
+        {FB_VAR_EEPROM_JEDEC, {GetEepromJedec, nullptr}},
+        {FB_VAR_EEPROM_UNIQUE_ID, {GetEepromUniqueId, nullptr}},
+        {FB_VAR_EEPROM_SPI_SPEED, {GetEepromSpiSpeed, nullptr}},
+        {FB_VAR_BOOTLOADER_BUILD_TIMESTAMP, {GetBootloaderBuildTimestamp, nullptr}},
         {FB_VAR_PRIVKEY, {GetPrivkey, nullptr}},
         {FB_VAR_IPV4_ADDRESS, {GetIpv4Address, nullptr}},
         {FB_VAR_IPV4_GATEWAY, {GetIpv4Gateway, nullptr}},
@@ -1739,6 +1747,66 @@ ssize_t bulk_write(int bulk_in, const char *buf, size_t length)
             return device->WriteFail("Unknown fwcrypto subcommand. Use 'status', 'init', or 'sign-hash'");
         }
     }
+
+    // EEPROM helpers — host signs the image and uploads it via the standard
+    // fastboot `download` flow, then issues one of these commands.
+
+    static std::string eeprom_resolve_spidev(const std::vector<std::string>& args) {
+        // args layout: ["oem", "<subcommand>", optional "<spidev>"]
+        if (args.size() >= 3 && !args[2].empty()) return args[2];
+        return rpi::eeprom::DetectSpiDev();
+    }
+
+    static bool oem_cmd_eeprom_update(FastbootDevice* device,
+                                      const std::vector<std::string>& args) {
+        const std::string spidev = eeprom_resolve_spidev(args);
+        if (spidev.empty()) {
+            return device->WriteFail("eeprom-update: no SPI device found; pass explicitly: "
+                                     "oem eeprom-update /dev/spidevN.0");
+        }
+        const auto& buf = device->download_data();
+        if (buf.empty()) {
+            return device->WriteFail("eeprom-update: no image staged; download signed image first");
+        }
+        const std::vector<uint8_t> image(buf.begin(), buf.end());
+        auto r = rpi::eeprom::Write(spidev, image);
+        if (!r.ok) return device->WriteFail("eeprom-update: " + r.err);
+        return device->WriteOkay("eeprom-update: " + spidev + " written (" +
+                                 std::to_string(image.size()) + " bytes)");
+    }
+
+    static bool oem_cmd_eeprom_verify(FastbootDevice* device,
+                                      const std::vector<std::string>& args) {
+        const std::string spidev = eeprom_resolve_spidev(args);
+        if (spidev.empty()) {
+            return device->WriteFail("eeprom-verify: no SPI device found");
+        }
+        const auto& buf = device->download_data();
+        if (buf.empty()) {
+            return device->WriteFail("eeprom-verify: no image staged; download expected image first");
+        }
+        const std::vector<uint8_t> expected(buf.begin(), buf.end());
+        auto r = rpi::eeprom::Verify(spidev, expected);
+        if (!r.ok) return device->WriteFail("eeprom-verify: " + r.err);
+        return device->WriteOkay("eeprom-verify: match");
+    }
+
+    static bool oem_cmd_eeprom_read(FastbootDevice* device,
+                                    const std::vector<std::string>& args) {
+        const std::string spidev = eeprom_resolve_spidev(args);
+        if (spidev.empty()) {
+            return device->WriteFail("eeprom-read: no SPI device found");
+        }
+        std::vector<uint8_t> image;
+        auto r = rpi::eeprom::Read(spidev, &image);
+        if (!r.ok) return device->WriteFail("eeprom-read: " + r.err);
+
+        auto& dst = device->download_data();
+        dst.assign(image.begin(), image.end());
+        device->WriteInfo("eeprom-read: sha256=" + rpi::eeprom::Sha256Hex(image));
+        return device->WriteOkay("eeprom-read: " + std::to_string(image.size()) +
+                                 " bytes staged for upload");
+    }
 } //namespace anonymous
 
 bool OemCmdHandler(FastbootDevice* device, const std::vector<std::string>& args) {
@@ -1795,6 +1863,12 @@ bool OemCmdHandler(FastbootDevice* device, const std::vector<std::string>& args)
         return oem_cmd_bmap_load(device, split_args);
     } else if (command_name == "bmap-verify") {
         return oem_cmd_bmap_verify(device, split_args);
+    } else if (command_name == "eeprom-update") {
+        return oem_cmd_eeprom_update(device, split_args);
+    } else if (command_name == "eeprom-verify") {
+        return oem_cmd_eeprom_verify(device, split_args);
+    } else if (command_name == "eeprom-read") {
+        return oem_cmd_eeprom_read(device, split_args);
     }
 
     return device->WriteFail("Unknown OEM command.");

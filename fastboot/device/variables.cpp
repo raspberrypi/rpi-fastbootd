@@ -16,6 +16,8 @@
 
 #include "variables.h"
 
+#include "eeprom.h"
+
 #include <algorithm>
 #include <cstring>
 #include <dirent.h>
@@ -1291,6 +1293,107 @@ bool GetSignedOtp(FastbootDevice* /* device */, const std::vector<std::string>& 
     } else {
         *message = "not available";
     }
+    return true;
+}
+
+bool GetEepromDevice(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
+                     std::string* message) {
+    std::string dev = rpi::eeprom::DetectSpiDev();
+    *message = dev.empty() ? "not available" : dev;
+    return true;
+}
+
+bool GetEepromSize(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
+                   std::string* message) {
+    std::string dev = rpi::eeprom::DetectSpiDev();
+    if (dev.empty()) {
+        *message = "not available";
+        return true;
+    }
+    std::size_t sz = 0;
+    auto r = rpi::eeprom::QuerySize(dev, &sz);
+    if (!r.ok) {
+        *message = "not available";
+        return true;
+    }
+    *message = std::to_string(sz);
+    return true;
+}
+
+bool GetEepromSha256(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
+                     std::string* message) {
+    std::string dev = rpi::eeprom::DetectSpiDev();
+    if (dev.empty()) {
+        *message = "not available";
+        return true;
+    }
+    std::vector<uint8_t> image;
+    auto r = rpi::eeprom::Read(dev, &image);
+    if (!r.ok) {
+        *message = "not available";
+        return true;
+    }
+    *message = rpi::eeprom::Sha256Hex(image);
+    return true;
+}
+
+bool GetEepromJedec(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
+                    std::string* message) {
+    std::string dev = rpi::eeprom::DetectSpiDev();
+    if (dev.empty()) {
+        *message = "not available";
+        return true;
+    }
+    rpi::eeprom::ChipInfo info;
+    auto r = rpi::eeprom::QueryChipInfo(dev, &info);
+    if (!r.ok) {
+        *message = "not available";
+        return true;
+    }
+    char buf[16];
+    std::snprintf(buf, sizeof(buf), "%02x%04x", info.jedec_manufacturer, info.jedec_device);
+    *message = buf;
+    return true;
+}
+
+bool GetEepromUniqueId(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
+                      std::string* message) {
+    std::string dev = rpi::eeprom::DetectSpiDev();
+    if (dev.empty()) {
+        *message = "not available";
+        return true;
+    }
+    rpi::eeprom::ChipInfo info;
+    auto r = rpi::eeprom::QueryChipInfo(dev, &info);
+    if (!r.ok || info.unique_id.empty()) {
+        *message = "not available";
+        return true;
+    }
+    *message = rpi::eeprom::BytesToHex(info.unique_id);
+    return true;
+}
+
+bool GetEepromSpiSpeed(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
+                      std::string* message) {
+    std::string dev = rpi::eeprom::DetectSpiDev();
+    if (dev.empty()) {
+        *message = "not available";
+        return true;
+    }
+    rpi::eeprom::ChipInfo info;
+    auto r = rpi::eeprom::QueryChipInfo(dev, &info);
+    if (!r.ok) {
+        *message = "not available";
+        return true;
+    }
+    *message = std::to_string(info.spi_speed_hz);
+    return true;
+}
+
+bool GetBootloaderBuildTimestamp(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
+                                 std::string* message) {
+    auto ts = rpi::eeprom::BootloaderBuildTimestamp();
+    *message = ts.empty() ? "not available" : ts;
     return true;
 }
 
