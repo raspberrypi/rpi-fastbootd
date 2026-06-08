@@ -16,7 +16,9 @@
 #include "flashing.h"
 
 #include <fcntl.h>
+#include <linux/fs.h>
 #include <string.h>
+#include <sys/ioctl.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -54,6 +56,21 @@ void SetErr(std::string* err, const std::string& msg) {
     if (err && err->empty()) {
         *err = msg;
     }
+}
+
+// True when dev_path names a whole-disk block device (e.g. /dev/mmcblk0)
+// rather than one of its partitions (e.g. /dev/mmcblk0p2). A partition exposes
+// a "partition" attribute under its sysfs node; a whole disk does not. Anything
+// not present in /sys/class/block (e.g. a device-mapper target) is treated as
+// not-a-whole-disk so we don't issue a re-read where it can't apply.
+bool IsWholeDisk(const std::string& dev_path) {
+    auto slash = dev_path.find_last_of('/');
+    std::string name = (slash == std::string::npos) ? dev_path : dev_path.substr(slash + 1);
+    std::string sysfs = "/sys/class/block/" + name;
+    if (access(sysfs.c_str(), F_OK) != 0) {
+        return false;
+    }
+    return access((sysfs + "/partition").c_str(), F_OK) != 0;
 }
 
 }  // namespace
@@ -222,6 +239,21 @@ int Flash(FastbootDevice* device, const std::string& partition_name, std::string
     }
     int result = FlashBlockDevice(&handle, data, block_device_size, err);
     sync();
+
+    // A whole-disk image (sparse or raw) can carry a fresh partition table, but
+    // writing the bytes doesn't update the kernel's in-memory view of it: the
+    // stale /dev/<disk>pN nodes linger and the new layout's nodes never appear.
+    // Tell the kernel to re-read so any follow-up command this session sees the
+    // new partitions. Best-effort, like the erase path — the data is already on
+    // disk and IDP performs the authoritative re-read before partitioning. Only
+    // attempted for whole-disk targets; BLKRRPART is a no-op (EINVAL) on a
+    // partition fd.
+    if (result == 0 && IsWholeDisk(partition_path)) {
+        if (ioctl(handle.fd(), BLKRRPART) < 0) {
+            PLOG(WARNING) << "BLKRRPART re-read after whole-disk flash of " << partition_path
+                          << " failed; new partition nodes may be stale until IDP re-reads";
+        }
+    }
     return result;
 }
 
