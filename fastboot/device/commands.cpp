@@ -18,6 +18,8 @@
 
 #include <inttypes.h>
 #include <limits.h>
+#include <dirent.h>
+#include <fcntl.h>
 #include <linux/fs.h>
 #include <sys/file.h>
 #include <sys/ioctl.h>
@@ -67,6 +69,7 @@
 #include <iostream>
 #include <fstream>
 #include <cerrno>
+#include <cstring>
 
 #ifdef FB_ENABLE_FETCH
 static constexpr bool kEnableFetch = true;
@@ -638,6 +641,126 @@ namespace {
               std::to_string(static_cast<int>(finalState)) + ")");
     }
 
+    static std::string ResolveBlockDevicePath(std::string dev_path) {
+        if (!dev_path.empty() && dev_path[0] == '/') {
+            return dev_path;
+        }
+
+        struct stat st;
+        const std::string mapper_path = "/dev/mapper/" + dev_path;
+        if (stat(mapper_path.c_str(), &st) == 0) {
+            return mapper_path;
+        }
+        return "/dev/" + dev_path;
+    }
+
+    static bool DeviceHasGpt(const std::string& dev_path) {
+        android::base::unique_fd fd(open(dev_path.c_str(), O_RDONLY | O_CLOEXEC));
+        if (fd < 0) {
+            return false;
+        }
+
+        char sig[8];
+        if (pread(fd.get(), sig, sizeof(sig), 512) != static_cast<ssize_t>(sizeof(sig))) {
+            return false;
+        }
+        return memcmp(sig, "EFI PART", 8) == 0;
+    }
+
+    static bool AddMapperPartitionMappings(const std::string& mapper_dev, std::string* error) {
+        char kpartx[] = "kpartx";
+        char add[] = "-a";
+        char* argv[] = {
+            kpartx,
+            add,
+            const_cast<char*>(mapper_dev.c_str()),
+            nullptr,
+        };
+
+        int subprocess_rc = -1;
+        int ret = rpi::process_spawn_blocking(&subprocess_rc, "kpartx", argv, nullptr);
+        if (ret != 0) {
+            if (error) {
+                *error = strerror(ret);
+            }
+            return false;
+        }
+        if (subprocess_rc != 0) {
+            if (error) {
+                *error = "kpartx exited with status " + std::to_string(subprocess_rc);
+            }
+            return false;
+        }
+        return true;
+    }
+
+    static std::vector<std::string> ListMapperPartitions(const std::string& mapper_dev) {
+        const auto slash = mapper_dev.rfind('/');
+        const std::string prefix =
+            (slash != std::string::npos) ? mapper_dev.substr(slash + 1) : mapper_dev;
+
+        std::vector<std::string> parts;
+        DIR* dir = opendir("/dev/mapper");
+        if (!dir) {
+            return parts;
+        }
+
+        for (dirent* entry = readdir(dir); entry != nullptr; entry = readdir(dir)) {
+            const std::string name = entry->d_name;
+            if (name == "." || name == ".." || name == prefix) {
+                continue;
+            }
+            if (name.rfind(prefix, 0) == 0 && name.size() > prefix.size()) {
+                parts.push_back("/dev/mapper/" + name);
+            }
+        }
+        closedir(dir);
+        std::sort(parts.begin(), parts.end());
+        return parts;
+    }
+
+    static void AfterCryptOpen(FastbootDevice* device, const std::string& mapped_name) {
+        const std::string mapper_dev = "/dev/mapper/" + mapped_name;
+        if (!DeviceHasGpt(mapper_dev)) {
+            return;
+        }
+
+        std::string error;
+        if (!AddMapperPartitionMappings(mapper_dev, &error)) {
+            device->WriteInfo("cryptopen: GPT detected but kpartx failed: " + error);
+            return;
+        }
+
+        device->WriteInfo("cryptopen: partitioned LUKS container; mount an inner block device");
+        for (const auto& part : ListMapperPartitions(mapper_dev)) {
+            device->WriteInfo("  " + part);
+        }
+    }
+
+    static std::string EnhanceMountError(const std::string& dev_path, const std::string& mountpoint,
+                                         const std::string& fstype_str, int err) {
+        std::string msg = "Mount failed for " + dev_path + " on " + mountpoint;
+        if (!fstype_str.empty()) {
+            msg += " (type " + fstype_str + ")";
+        }
+        msg += ": " + strerror(err);
+
+        if (err != EINVAL || dev_path.rfind("/dev/mapper/", 0) != 0 || !DeviceHasGpt(dev_path)) {
+            return msg;
+        }
+
+        std::string kpartx_error;
+        AddMapperPartitionMappings(dev_path, &kpartx_error);
+
+        const auto parts = ListMapperPartitions(dev_path);
+        msg += ". Device contains a partition table; mount an inner partition";
+        if (!parts.empty()) {
+            msg += " (e.g. " + parts[0] + ")";
+        }
+        msg += " rather than the LUKS container.";
+        return msg;
+    }
+
     // oem cryptinit <blkdev> <label>
     static bool oem_cmd_cryptinit(FastbootDevice* device, const std::vector<std::string>& args) {
         if (args.size() < 4) {
@@ -731,9 +854,8 @@ namespace {
         if (args.size() < 4) {
             return device->WriteFail("Insufficient arguments provided. Usage: oem cryptopen <block_device_path> <mapped_name>");
         }
-        auto block_device_path = args[2];
+        auto block_device_path = ResolveBlockDevicePath(args[2]);
         auto mapped_name = args[3];
-        block_device_path.insert(0, "/dev/");
 
         // Generate hardware-based LUKS key
         std::string luks_key = generateLuksKeyFromPartition(block_device_path);
@@ -756,6 +878,7 @@ namespace {
 #ifdef HAVE_LIBCRYPTSETUP
         std::string error_msg;
         if (CryptOpenNative(block_device_path, mapped_name, luks_key, &error_msg)) {
+            AfterCryptOpen(device, mapped_name);
             return device->WriteOkay("LUKS device opened successfully");
         }
         
@@ -791,6 +914,7 @@ namespace {
         } else if (subprocess_rc) {
             return device->WriteFail("cryptsetup luksOpen failed.");
         }
+        AfterCryptOpen(device, mapped_name);
     return device->WriteOkay("cryptsetup luksOpen completed.");
 }
 
@@ -949,6 +1073,9 @@ ssize_t bulk_write(int bulk_in, const char *buf, size_t length)
     //   oem mount <device> <mountpoint>           — auto-detect fs type
     //   oem mount <device> <mountpoint> <fstype>  — explicit fs type
     //   oem umount <mountpoint>
+    //
+    // For partitioned LUKS containers (IDP etype=partitioned), cryptopen exposes
+    // inner partitions as /dev/mapper/<name><partnum> (e.g. cryptroot2).
 
     static bool oem_cmd_mount(FastbootDevice* device, const std::vector<std::string>& args) {
         // args: ["oem", "mount", "<device>", "<mountpoint>"]
@@ -957,16 +1084,12 @@ ssize_t bulk_write(int bulk_in, const char *buf, size_t length)
             return device->WriteFail(
                 "Usage: oem mount <device> <mountpoint> [fstype]\r\n"
                 "e.g.:  oem mount mmcblk0p1 /mnt/bootfs\r\n"
-                "       oem mount mmcblk0p1 /mnt/bootfs vfat");
+                "       oem mount mmcblk0p1 /mnt/bootfs vfat\r\n"
+                "       oem mount cryptroot2 /mnt/rootfs ext4");
         }
 
-        std::string dev_path = args[2];
+        std::string dev_path = ResolveBlockDevicePath(args[2]);
         const std::string& mountpoint = args[3];
-
-        // Allow bare device names (mmcblk0p1) as well as full paths (/dev/mmcblk0p1)
-        if (dev_path[0] != '/') {
-            dev_path = "/dev/" + dev_path;
-        }
 
         // Validate the block device exists
         struct stat st;
@@ -1006,12 +1129,12 @@ ssize_t bulk_write(int bulk_in, const char *buf, size_t length)
                     }
                 }
                 if (!mounted) {
-                    return device->WriteFail("Mount failed for " + dev_path + " on " + mountpoint +
-                                             ": " + strerror(errno));
+                    return device->WriteFail(
+                        EnhanceMountError(dev_path, mountpoint, fstype_str, errno));
                 }
             } else {
-                return device->WriteFail("Mount failed for " + dev_path + " on " + mountpoint +
-                                         " (type " + fstype_str + "): " + strerror(errno));
+                return device->WriteFail(
+                    EnhanceMountError(dev_path, mountpoint, fstype_str, errno));
             }
         }
 
