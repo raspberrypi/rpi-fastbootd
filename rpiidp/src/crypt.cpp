@@ -7,6 +7,7 @@
 #include <sys/stat.h>
 #include <climits>
 #include <cstdlib>
+#include <cstring>
 #include <fcntl.h>
 #include <spawn.h>
 #include <unistd.h>
@@ -15,6 +16,13 @@
 #include <stdexcept>
 #include "idpcrypt.h"
 #include "utility.h"
+
+// libblockdeviceid (C ABI). Shared with the block-device-id CLI used by the
+// boot-time cryptroot unlocker, so the IDP key derivation here matches the
+// identifier the device computes at unlock time.
+extern "C" {
+#include <block_device_id.h>
+}
 
 #ifdef WITH_FASTBOOT
 #include "device/utility.h"
@@ -259,65 +267,22 @@ bool SecureKeyfile::pathExists(const std::string& path) {
     return (stat(path.c_str(), &buffer) == 0);
 }
 
-// Get unique device ID from sysfs (based on getDeviceId from commands.cpp)
+// Get the block device's innate hardware identifier via libblockdeviceid.
+//
+// Must match the boot-time cryptroot unlocker byte-for-byte: it runs
+// `block-device-id <dev>` (the CLI from this library) and HMACs its stdout,
+// which is exactly what bdi_get_id() returns. A previous hand-rolled sysfs
+// reader diverged for NVMe (EUI here vs. controller serial at boot), so FDE
+// devices on NVMe could never be unlocked.
 std::string SecureKeyfile::getDeviceId(const std::string& block_device) {
-    std::string device = block_device;
-    if (device.find("/dev/") == 0) {
-        device = device.substr(5);
+    char id_buf[256];
+    int rc = bdi_get_id(block_device.c_str(), id_buf, sizeof(id_buf));
+    if (rc != 0) {
+        ERR("bdi_get_id failed for " << block_device << ": " << strerror(-rc)
+            << " (" << rc << ")");
+        return "";
     }
-
-    // Extract base device name (remove partition)
-    std::string base_device = device;
-    if (device.find("mmcblk") != std::string::npos) {
-        size_t p_pos = device.find("p");
-        if (p_pos != std::string::npos) {
-            base_device = device.substr(0, p_pos);
-        }
-    } else if (device.find("nvme") != std::string::npos) {
-        size_t p_pos = device.find_last_of("p");
-        if (p_pos != std::string::npos) {
-            base_device = device.substr(0, p_pos);
-        }
-    } else {
-        // SATA/SCSI: sda1 -> sda
-        while (!base_device.empty() && std::isdigit(base_device.back())) {
-            base_device.pop_back();
-        }
-    }
-
-    std::string sys_block_path = "/sys/class/block/" + base_device;
-
-    // Try MMC/SD Card CID first
-    std::string device_id = readSysFile(sys_block_path + "/device/cid");
-    if (!device_id.empty()) {
-        return device_id;
-    }
-
-    // Try NVMe EUI
-    device_id = readSysFile(sys_block_path + "/eui");
-    if (!device_id.empty()) {
-        return device_id;
-    }
-
-    // Try device serial
-    device_id = readSysFile(sys_block_path + "/device/serial");
-    if (!device_id.empty()) {
-        return device_id;
-    }
-
-    // Check if this is a USB device - return error
-    if (pathExists(sys_block_path + "/device")) {
-        char resolved_path[PATH_MAX];
-        std::string device_link = sys_block_path + "/device";
-        if (realpath(device_link.c_str(), resolved_path) != nullptr) {
-            std::string device_path = resolved_path;
-            if (device_path.find("/usb") != std::string::npos) {
-                return "ERROR_USB_NOT_SUPPORTED";
-            }
-        }
-    }
-
-    return "";
+    return std::string(id_buf);
 }
 
 SecureKeyfile::SecureKeyfile(std::string_view blkdev)
@@ -326,10 +291,6 @@ SecureKeyfile::SecureKeyfile(std::string_view blkdev)
    std::string device_id = getDeviceId(std::string(blkdev));
    if (device_id.empty()) {
       throw SecureKeyfileError("Could not determine device ID for " + std::string(blkdev));
-   }
-
-   if (device_id == "ERROR_USB_NOT_SUPPORTED") {
-      throw SecureKeyfileError("USB devices not supported for LUKS encryption");
    }
 
    // Create a unique temporary filename for the keyfile

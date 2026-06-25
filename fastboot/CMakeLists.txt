@@ -47,6 +47,15 @@ set(RPI_VERITY_INSTALL OFF CACHE BOOL "" FORCE)
 add_subdirectory("${_rpi_verity_dir}" rpi-verity-verifier EXCLUDE_FROM_ALL)
 find_package(rpifwcrypto REQUIRED)
 
+# libblockdeviceid provides the C ABI (bdi_get_id) for deriving a block
+# device's innate hardware identifier. The same library backs the
+# block-device-id CLI used by the boot-time cryptroot unlocker, so linking it
+# here keeps provisioning and unlock key derivation in lock-step. REQUIRED:
+# FDE/SB provisioning produces unbootable devices without a matching key.
+find_path(BLOCKDEVICEID_INCLUDE_DIR block_device_id.h REQUIRED)
+find_library(BLOCKDEVICEID_LIBRARY NAMES blockdeviceid REQUIRED)
+message(STATUS "libblockdeviceid: ${BLOCKDEVICEID_LIBRARY} (header ${BLOCKDEVICEID_INCLUDE_DIR})")
+
 # GPIO control via libgpiod (optional - falls back to command if not available)
 pkg_check_modules(GPIOD libgpiod>=2.0)
 
@@ -156,6 +165,7 @@ target_include_directories(fastbootd PRIVATE
     ${CRYPTSETUP_INCLUDE_DIRS}
     ${FLASHROM_INCLUDE_DIRS}
     ${RPIFWCRYPTO_INCLUDE_DIRS}
+    ${BLOCKDEVICEID_INCLUDE_DIR}
     ${CMAKE_CURRENT_LIST_DIR}/../rpiparted/include
 )
 
@@ -170,6 +180,7 @@ target_link_libraries(fastbootd PRIVATE
     ${CRYPTSETUP_LIBRARIES}
     ${FLASHROM_LIBRARIES}
     ${RPIFWCRYPTO_LIBRARIES}
+    ${BLOCKDEVICEID_LIBRARY}
     OpenSSL::Crypto
     asyncio
     cutils

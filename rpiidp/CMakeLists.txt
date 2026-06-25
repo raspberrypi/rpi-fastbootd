@@ -16,6 +16,12 @@ include_directories(${CMAKE_SOURCE_DIR}/include)
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(UDEV REQUIRED libudev)
 
+# libblockdeviceid (C ABI) provides bdi_get_id() for block-device identity.
+# Shared with the block-device-id CLI used by the boot-time cryptroot
+# unlocker, keeping IDP key derivation and unlock in lock-step.
+find_path(BLOCKDEVICEID_INCLUDE_DIR block_device_id.h REQUIRED)
+find_library(BLOCKDEVICEID_LIBRARY NAMES blockdeviceid REQUIRED)
+
 option(IDP_FASTBOOT "Build IDP with fastboot integration" ON)
 option(IDP_TESTS "Build IDP tests" ON)
 
@@ -45,8 +51,8 @@ else()
    add_subdirectory(../rpiparted rpiparted)
 endif()
 
-target_include_directories(rpiidp PRIVATE ${UDEV_INCLUDE_DIRS})
-target_link_libraries(rpiidp PRIVATE ${JSONCPP_LIBRARIES} rpiparted ${UDEV_LIBRARIES})
+target_include_directories(rpiidp PRIVATE ${UDEV_INCLUDE_DIRS} ${BLOCKDEVICEID_INCLUDE_DIR})
+target_link_libraries(rpiidp PRIVATE ${JSONCPP_LIBRARIES} rpiparted ${UDEV_LIBRARIES} ${BLOCKDEVICEID_LIBRARY})
 
 target_include_directories(rpiidp PUBLIC 
    ${CMAKE_CURRENT_SOURCE_DIR}/include

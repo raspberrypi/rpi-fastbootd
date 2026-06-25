@@ -64,6 +64,15 @@
 // librpifwcrypto
 #include <rpifwcrypto.h>
 
+// libblockdeviceid (C ABI). The boot-time cryptroot unlocker derives the LUKS
+// passphrase by piping `block-device-id <dev>` (the CLI from this same
+// library) into rpi-fw-crypto. By calling the library here we guarantee
+// provisioning and unlock compute the device identity from byte-identical
+// logic, instead of a parallel hand-rolled sysfs reader that could drift.
+extern "C" {
+#include <block_device_id.h>
+}
+
 #include <openssl/evp.h>
 
 #include <iostream>
@@ -229,82 +238,28 @@ static bool GetVarAll(FastbootDevice* device) {
     return true;
 }
 
-// Helper to read a file and return its contents as a string
-static std::string readSysFile(const std::string& path) {
-    std::ifstream file(path, std::ios::in | std::ios::binary);
-    if (!file.is_open()) {
+// Retrieve a block device's innate hardware identifier (MMC CID, NVMe
+// controller serial, ...) via libblockdeviceid.
+//
+// This MUST stay byte-for-byte identical to what the boot-time cryptroot
+// unlocker feeds into rpi-fw-crypto, otherwise the LUKS key we create here
+// can never be reproduced at boot. That path runs `block-device-id <dev>`
+// (the CLI built from this same library) and pipes its stdout into the HMAC;
+// the CLI emits exactly what bdi_get_id() returns (the raw sysfs bytes,
+// including any trailing newline), so HMACing this string keeps cryptinit
+// and unlock in agreement. The accepted path may be a partition or a whole
+// disk - the library resolves partitions to their parent device - so both
+// `cryptinit /dev/nvme0n1p2` (here) and `block-device-id /dev/nvme0n1` (at
+// boot) yield the same identifier.
+static std::string getDeviceId(const std::string& block_device) {
+    char id_buf[256];
+    int rc = bdi_get_id(block_device.c_str(), id_buf, sizeof(id_buf));
+    if (rc != 0) {
+        LOG(WARNING) << "bdi_get_id failed for " << block_device << ": "
+                     << strerror(-rc) << " (" << rc << ")";
         return "";
     }
-
-    std::ostringstream ss;
-    ss << file.rdbuf();
-    return ss.str();
-}
-
-// Helper to check if a path exists
-static bool pathExists(const std::string& path) {
-    struct stat buffer;
-    return (stat(path.c_str(), &buffer) == 0);
-}
-
-static std::string getDeviceId(const std::string& block_device) {
-    std::string device = block_device;
-    if (device.find("/dev/") == 0) {
-        device = device.substr(5);
-    }
-    
-    // Extract base device name (remove partition)
-    std::string base_device = device;
-    if (device.find("mmcblk") != std::string::npos) {
-        size_t p_pos = device.find("p");
-        if (p_pos != std::string::npos) {
-            base_device = device.substr(0, p_pos);
-        }
-    } else if (device.find("nvme") != std::string::npos) {
-        size_t p_pos = device.find_last_of("p");
-        if (p_pos != std::string::npos) {
-            base_device = device.substr(0, p_pos);
-        }
-    } else {
-        // SATA/SCSI: sda1 -> sda
-        while (!base_device.empty() && std::isdigit(base_device.back())) {
-            base_device.pop_back();
-        }
-    }
-    
-    std::string sys_block_path = "/sys/class/block/" + base_device;
-    
-    // Try MMC/SD Card CID first
-    std::string device_id = readSysFile(sys_block_path + "/device/cid");
-    if (!device_id.empty()) {
-        return device_id;
-    }
-    
-    // Try NVMe EUI
-    device_id = readSysFile(sys_block_path + "/eui");
-    if (!device_id.empty()) {
-        return device_id;
-    }
-    
-    // Try device serial
-    device_id = readSysFile(sys_block_path + "/device/serial");
-    if (!device_id.empty()) {
-        return device_id;
-    }
-    
-    // Check if this is a USB device - return error
-    if (pathExists(sys_block_path + "/device")) {
-        char resolved_path[PATH_MAX];
-        std::string device_link = sys_block_path + "/device";
-        if (realpath(device_link.c_str(), resolved_path) != nullptr) {
-            std::string device_path = resolved_path;
-            if (device_path.find("/usb") != std::string::npos) {
-                return "ERROR_USB_NOT_SUPPORTED";
-            }
-        }
-    }
-    
-    return "";
+    return std::string(id_buf);
 }
 
 static std::string executeCommand(const std::string& command) {
@@ -334,10 +289,6 @@ static std::string generateLuksKeyFromPartition(const std::string& block_device)
     
     if (device_id.empty()) {
         return "";
-    }
-    
-    if (device_id == "ERROR_USB_NOT_SUPPORTED") {
-        return "ERROR_USB_NOT_SUPPORTED";
     }
 
     // Use RpiFwCrypto class to calculate HMAC
@@ -784,9 +735,6 @@ namespace {
         if (luks_key.empty()) {
             return device->WriteFail("Cannot generate LUKS key - unsupported device type");
         }
-        if (luks_key == "ERROR_USB_NOT_SUPPORTED") {
-            return device->WriteFail("USB devices not supported for LUKS encryption");
-        }
 
         PartitionHandle handle;
         if (!OpenPartition(device, block_device, &handle, O_WRONLY | O_DIRECT)) {
@@ -862,9 +810,6 @@ namespace {
         if (luks_key.empty()) {
             return device->WriteFail("Cannot generate LUKS key - unsupported device type");
         }
-        if (luks_key == "ERROR_USB_NOT_SUPPORTED") {
-            return device->WriteFail("USB devices not supported for LUKS encryption");
-        }
 
         PartitionHandle handle;
         if (!OpenPartition(device, block_device_path, &handle, O_WRONLY | O_DIRECT)) {
@@ -931,9 +876,6 @@ static bool oem_cmd_cryptsetpassword(FastbootDevice* device, const std::vector<s
     std::string luks_key = generateLuksKeyFromPartition(block_device);
     if (luks_key.empty()) {
         return device->WriteFail("Cannot generate LUKS key - unsupported device type");
-    }
-    if (luks_key == "ERROR_USB_NOT_SUPPORTED") {
-        return device->WriteFail("USB devices not supported for LUKS encryption");
     }
 
 #ifdef HAVE_LIBCRYPTSETUP
