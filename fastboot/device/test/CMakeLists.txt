@@ -134,7 +134,25 @@ target_include_directories(idp_crypto_test PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/..
 )
 
-# Firmware crypto (librpifwcrypto) tests via RpiFwCrypto C++ wrapper
+# EEPROM image parsing and min-boot-version checks
+add_executable(eeprom_test eeprom_test.cpp ../eeprom.cpp)
+
+target_link_libraries(eeprom_test PRIVATE Catch2::Catch2WithMain)
+
+target_compile_features(eeprom_test PRIVATE cxx_std_17)
+
+target_compile_definitions(eeprom_test PRIVATE
+    ${COMMON_CPPFLAGS}
+)
+
+target_include_directories(eeprom_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/..
+    /usr/include/android
+)
+
+add_test(NAME eeprom_all_tests COMMAND eeprom_test)
+add_test(NAME eeprom_parsing COMMAND eeprom_test "[eeprom]")
+
 # Link the pre-built utility.cpp.o from the fastbootd target to avoid
 # re-compiling utility.cpp (which drags in the full transport stack).
 set(UTILITY_OBJ $<TARGET_OBJECTS:fastbootd>)
@@ -214,7 +232,7 @@ add_test(NAME fwcrypto_hmac COMMAND fwcrypto_test "[hmac]")
 add_test(NAME fwcrypto_pubkey COMMAND fwcrypto_test "[pubkey]")
 
 # Installation (optional)
-install(TARGETS kernel_log_test gpio_test gateway_test crypto_test idp_crypto_test verity_test fwcrypto_test
+install(TARGETS kernel_log_test gpio_test gateway_test crypto_test idp_crypto_test verity_test fwcrypto_test eeprom_test
         RUNTIME DESTINATION tests
 )
 
@@ -225,7 +243,7 @@ message(STATUS "  - gpio_test: libgpiod library")
 message(STATUS "  - gateway_test: /proc gateway parsing")
 message(STATUS "  - crypto_test: libcryptsetup LUKS operations")
 message(STATUS "  - verity_test: dm-verity hash tree generation")
-message(STATUS "  - fwcrypto_test: librpifwcrypto firmware crypto operations")
+message(STATUS "  - eeprom_test: EEPROM image parsing and min-boot-version checks")
 message(STATUS "  - Run tests with: ctest --test-dir build/fastboot/device/test")
 message(STATUS "  - Or directly: build/fastboot/device/test/<test_name>")
 message(STATUS "  - For verbose output: <test> -s")

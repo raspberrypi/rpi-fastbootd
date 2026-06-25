@@ -1247,52 +1247,37 @@ bool GetMmcExtCsd(FastbootDevice* device) {
 
 bool GetSignedEeprom(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
                            std::string* message) {
-    std::string signed_raw = {};
-    if (android::base::ReadFileToString("/proc/device-tree/chosen/bootloader/signed", &signed_raw)) {
-        try {
-            *message = (std::stoi(signed_raw) & (1 << 0)) ? "present" : "not present";
-        } catch (const std::invalid_argument& e) {
-            *message = "not available";
-        } catch (const std::out_of_range& e) {
-            *message = "not available";
-        }
-    } else {
+    uint32_t signed_bits = 0;
+    if (!rpi::eeprom::ReadDtUInt32("/proc/device-tree/chosen/bootloader/signed",
+                                   &signed_bits)) {
         *message = "not available";
+        return true;
     }
+    *message = (signed_bits & (1U << 0)) ? "present" : "not present";
     return true;
 }
 
 bool GetSignedDevkey(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
                          std::string* message) {
-    std::string signed_raw = {};
-    if (android::base::ReadFileToString("/proc/device-tree/chosen/bootloader/signed", &signed_raw)) {
-        try {
-            *message = (std::stoi(signed_raw) & (1 << 2)) ? "present" : "not present";
-        } catch (const std::invalid_argument& e) {
-            *message = "not available";
-        } catch (const std::out_of_range& e) {
-            *message = "not available";
-        }
-    } else {
+    uint32_t signed_bits = 0;
+    if (!rpi::eeprom::ReadDtUInt32("/proc/device-tree/chosen/bootloader/signed",
+                                   &signed_bits)) {
         *message = "not available";
+        return true;
     }
+    *message = (signed_bits & (1U << 2)) ? "present" : "not present";
     return true;
 }
 
 bool GetSignedOtp(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
                         std::string* message) {
-    std::string signed_raw = {};
-    if (android::base::ReadFileToString("/proc/device-tree/chosen/bootloader/signed", &signed_raw)) {
-        try {
-            *message = (std::stoi(signed_raw) & (1 << 3)) ? "present" : "not present";
-        } catch (const std::invalid_argument& e) {
-            *message = "not available";
-        } catch (const std::out_of_range& e) {
-            *message = "not available";
-        }
-    } else {
+    uint32_t signed_bits = 0;
+    if (!rpi::eeprom::ReadDtUInt32("/proc/device-tree/chosen/bootloader/signed",
+                                   &signed_bits)) {
         *message = "not available";
+        return true;
     }
+    *message = (signed_bits & (1U << 3)) ? "present" : "not present";
     return true;
 }
 

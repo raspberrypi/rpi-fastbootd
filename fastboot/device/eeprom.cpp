@@ -143,6 +143,7 @@ Result Write(const std::string& spidev, const std::vector<uint8_t>& image) {
         return Result::Fail("supplied image size " + std::to_string(image.size()) +
                             " outside sanity bounds");
     }
+    if (auto r = CheckMinBootVer(image); !r.ok) return r;
 #ifndef HAVE_LIBFLASHROM
     (void)spidev;
     return Result::Fail("fastbootd built without libflashrom support");
@@ -266,21 +267,80 @@ Result QueryChipInfo(const std::string& spidev, ChipInfo* info) {
     return Result::Ok();
 }
 
-std::string BootloaderBuildTimestamp() {
+bool ReadDtUInt32(const char* path, uint32_t* value_out) {
+    if (!value_out) {
+        return false;
+    }
     std::string raw;
-    if (!android::base::ReadFileToString(
-            "/proc/device-tree/chosen/bootloader/build-timestamp", &raw)) {
+    if (!android::base::ReadFileToString(path, &raw) || raw.size() < 4) {
+        return false;
+    }
+    *value_out = (static_cast<uint32_t>(static_cast<uint8_t>(raw[0])) << 24) |
+                 (static_cast<uint32_t>(static_cast<uint8_t>(raw[1])) << 16) |
+                 (static_cast<uint32_t>(static_cast<uint8_t>(raw[2])) << 8)  |
+                  static_cast<uint32_t>(static_cast<uint8_t>(raw[3]));
+    return true;
+}
+
+std::string BootloaderBuildTimestamp() {
+    uint32_t ts = 0;
+    if (!ReadDtUInt32("/proc/device-tree/chosen/bootloader/build-timestamp", &ts)) {
         return {};
     }
-    // Device-tree exposes this as a 4-byte big-endian integer. Decode it.
-    if (raw.size() >= 4) {
-        uint32_t ts = (static_cast<uint8_t>(raw[0]) << 24) |
-                      (static_cast<uint8_t>(raw[1]) << 16) |
-                      (static_cast<uint8_t>(raw[2]) << 8)  |
-                       static_cast<uint8_t>(raw[3]);
-        return std::to_string(ts);
+    return std::to_string(ts);
+}
+
+namespace {
+
+uint32_t BoardMinBootVer() {
+    uint32_t value = 0;
+    if (!ReadDtUInt32("/proc/device-tree/chosen/rpi-min-boot-ver", &value)) {
+        return 0;
     }
-    return android::base::Trim(raw);
+    return value;
+}
+
+}  // namespace
+
+uint32_t ImageMfgVer(const std::vector<uint8_t>& image) {
+    static constexpr char kPrefix[] = "MFG_VER: ";
+    if (image.size() < sizeof(kPrefix)) {
+        return 0;
+    }
+    for (std::size_t i = 0; i + sizeof(kPrefix) <= image.size(); ++i) {
+        if (std::memcmp(image.data() + i, kPrefix, sizeof(kPrefix) - 1) != 0) {
+            continue;
+        }
+        std::size_t pos = i + sizeof(kPrefix) - 1;
+        uint32_t value = 0;
+        bool found_digit = false;
+        while (pos < image.size()) {
+            const uint8_t ch = image[pos++];
+            if (ch < '0' || ch > '9') {
+                break;
+            }
+            found_digit = true;
+            value = value * 10U + static_cast<uint32_t>(ch - '0');
+        }
+        if (found_digit) {
+            return value;
+        }
+    }
+    return 0;
+}
+
+Result CheckMinBootVer(const std::vector<uint8_t>& image) {
+    const uint32_t board_min = BoardMinBootVer();
+    if (board_min == 0) {
+        return Result::Ok();
+    }
+    const uint32_t image_ver = ImageMfgVer(image);
+    if (board_min > image_ver) {
+        return Result::Fail(
+                "bootloader image MFG_VER " + std::to_string(image_ver) +
+                " is older than board minimum " + std::to_string(board_min));
+    }
+    return Result::Ok();
 }
 
 std::string BytesToHex(const std::vector<uint8_t>& buf) {

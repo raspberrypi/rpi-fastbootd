@@ -61,6 +61,17 @@ Result QueryChipInfo(const std::string& spidev, ChipInfo* info);
 // build-timestamp, or empty string if unavailable.
 std::string BootloaderBuildTimestamp();
 
+// Read a big-endian u32 device-tree property. Returns false if missing or short.
+bool ReadDtUInt32(const char* path, uint32_t* value_out);
+
+// Extract MFG_VER from an EEPROM image (scans for "MFG_VER: N" like
+// rpi-eeprom-update). Returns 0 if not found.
+uint32_t ImageMfgVer(const std::vector<uint8_t>& image);
+
+// Reject images whose MFG_VER is below the board minimum. Mirrors
+// rpi-eeprom-update with STRICT_MIN_VER_CHECK=1.
+Result CheckMinBootVer(const std::vector<uint8_t>& image);
+
 std::string BytesToHex(const std::vector<uint8_t>& buf);
 std::string Sha256Hex(const std::vector<uint8_t>& buf);
 
