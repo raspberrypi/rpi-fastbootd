@@ -3,6 +3,7 @@
 #include <iostream>
 #include <algorithm>
 #include <cerrno>
+#include <cstdlib>
 #include <cstring>
 #include <unistd.h>
 
@@ -11,6 +12,23 @@
 #define MSG(msg) std::cout << "MSG: " << msg << std::endl
 
 #define ASSERT(cond, msg) do { if (!(cond)) { ERR(msg); std::abort(); } } while(0)
+
+
+namespace {
+   // Check a disklabel id string for being nothing but zeros. libfdisk
+   // does not reject an all-zero id.
+   bool is_zero_id(const std::string& id) {
+      std::string digits = id;
+      if (digits.size() > 1 && digits[0] == '0' && (digits[1] == 'x' || digits[1] == 'X')) {
+         digits.erase(0, 2);
+      }
+      digits.erase(std::remove(digits.begin(), digits.end(), '-'), digits.end());
+
+      return !digits.empty() && std::all_of(digits.begin(), digits.end(), [](unsigned char c) {
+         return c == '0';
+      });
+   }
+}
 
 
 FdiskContextDeleter::FdiskContextDeleter(bool* assigned)
@@ -106,14 +124,27 @@ bool RPIparted::createPartitionTable(const std::string& type, const std::optiona
    const char* label_type = (type_lower == "mbr") ? "dos" : type_lower.c_str();
 
    if (fdisk_create_disklabel(context_.get(), label_type) != 0) {
-      ERR("Failed to create label " << type);
+      ERR("Failed to create disk label for type " << type);
       return false;
    }
 
-   if (id && !id->empty() && \
-         fdisk_set_disklabel_id_from_string(context_.get(), id->c_str())) {
-      ERR("Invalid label ID " << id->c_str());
-      return false;
+   // Set disk label from user, else keep the one just generated
+   if (id && !id->empty()) {
+      if (fdisk_set_disklabel_id_from_string(context_.get(), id->c_str())) {
+         ERR("Invalid disk label (rejected) " << id->c_str() << " for type " << type);
+         return false;
+      }
+
+      // Reject an all-zero ID
+      char* applied_id = nullptr;
+      if (fdisk_get_disklabel_id(context_.get(), &applied_id) == 0 && applied_id) {
+         bool zero = is_zero_id(applied_id);
+         free(applied_id);
+         if (zero) {
+            ERR("Invalid disk label (rejected all-zero) " << id->c_str() << " for type " << type);
+            return false;
+         }
+      }
    }
 
    is_gpt_ = (type_lower == "gpt");
