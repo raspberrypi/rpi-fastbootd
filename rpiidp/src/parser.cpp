@@ -459,6 +459,7 @@ bool IDPparser::parseIGv2(const Json::Value& json, const IDPversion& version, st
       return false;
    }
 
+   // Set partition table attrs
    size_t align = fromGIsz(str);
    if (align % (1024*1024) != 0) {
       ERR("Partition alignment must be a multiple of 1MB.");
@@ -466,21 +467,28 @@ bool IDPparser::parseIGv2(const Json::Value& json, const IDPversion& version, st
    }
    image_.device_storage.ptable_align = align;
 
-
    const Json::Value& ptable = json["layout"]["partitiontable"]["label"];
 
    if (ptable.asString() == "dos")
       image_.device_storage.ptable_type = IDPptable_type::DOS;
-   if (ptable.asString() == "gpt")
+   else if (ptable.asString() == "gpt")
       image_.device_storage.ptable_type = IDPptable_type::GPT;
-
-   if (image_.device_storage.ptable_type == IDPptable_type::GPT) {
-      const Json::Value& id = json["layout"]["partitiontable"]["id"];
-      if (id.isString() && !id.asString().empty())
-         image_.device_storage.ptable_id = id.asString();
-      else
-         image_.device_storage.ptable_id.reset();
+   else {
+      ERR("partitiontable: invalid 'label'");
+      return false;
    }
+
+   const Json::Value& id = json["layout"]["partitiontable"]["id"];
+
+   if (!id.isNull() && !id.isString()) {
+      ERR("partitiontable: 'id' must be a string");
+      return false;
+   }
+
+   if (id.isString() && !id.asString().empty())
+      image_.device_storage.ptable_id = id.asString();
+   else
+      image_.device_storage.ptable_id.reset();
 
    if (!checkPMAPCompat(json, str, error)) {
       ERR("PMAP compat check failed: " << error);
