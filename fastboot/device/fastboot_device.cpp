@@ -17,6 +17,7 @@
 #include "fastboot_device.h"
 
 #include <algorithm>
+#include <exception>
 
 #include <android-base/logging.h>
 #include <android-base/properties.h>
@@ -192,7 +193,33 @@ void FastbootDevice::ExecuteCommands() {
             WriteStatus(FastbootResult::FAIL, "Unrecognized command " + args[0]);
             continue;
         }
-        if (!found_command->second(this, args)) {
+        // Backstop. Command handlers reach parsers and libraries that throw on
+        // malformed input, and an exception escaping here has nowhere to go:
+        // there is no handler between this loop and main(), on any of the three
+        // paths that call it, so it would terminate fastbootd. Losing the
+        // daemon mid-session is far worse than refusing one command -- the
+        // device drops off the bus and the host sees a transport failure
+        // instead of a reason.
+        //
+        // The session ends rather than continuing, because an exception means
+        // the handler stopped somewhere it did not choose to and this loop
+        // cannot know what state it left behind. The client reconnects to a
+        // clean device. Handlers that can describe their own failure should
+        // still catch it themselves and carry on.
+        bool keep_going = false;
+        try {
+            keep_going = found_command->second(this, args);
+        } catch (const std::exception& e) {
+            LOG(ERROR) << "Command '" << command << "' threw: " << e.what();
+            WriteStatus(FastbootResult::FAIL, std::string("internal error: ") + e.what());
+            return;
+        } catch (...) {
+            LOG(ERROR) << "Command '" << command << "' threw a non-standard exception";
+            WriteStatus(FastbootResult::FAIL, "internal error");
+            return;
+        }
+
+        if (!keep_going) {
             return;
         }
     }
