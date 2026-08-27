@@ -519,9 +519,16 @@ namespace {
 
        device->idp = std::make_unique<IDPdevice>();
 
-       if (!device->idp->Initialise(ptr_data, size)) {
+       std::string init_reason;
+       if (!device->idp->Initialise(ptr_data, size, init_reason)) {
           device->idp.reset();
-          return device->WriteFail("IDP:invalid description");
+          // Say which of the ways it was invalid, the way idpwrite and the
+          // canProvision path below already do. A description that a JSON
+          // schema accepts can still be rejected here -- the firmware checks
+          // things a schema cannot express, like sector size and partition
+          // alignment -- so "invalid description" on its own left no way to
+          // tell a typo from an unsupported version from a semantic limit.
+          return device->WriteFail("IDP:invalid description: " + init_reason);
        }
 
        std::string provision_reason;
