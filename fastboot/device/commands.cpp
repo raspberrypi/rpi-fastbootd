@@ -519,8 +519,23 @@ namespace {
 
        device->idp = std::make_unique<IDPdevice>();
 
+       // A description is untrusted input and the parser reaches library calls
+       // that throw on malformed values -- an unreadable size suffix, a
+       // non-integer LUKS key_size, a non-numeric provisionmap key. Catch here,
+       // where the half-initialised IDPdevice can still be discarded; letting
+       // it escape would leave device->idp set on a device whose state nobody
+       // can describe, and take fastbootd down with it.
        std::string init_reason;
-       if (!device->idp->Initialise(ptr_data, size, init_reason)) {
+       bool init_ok = false;
+       try {
+          init_ok = device->idp->Initialise(ptr_data, size, init_reason);
+       }
+       catch (const std::exception& e) {
+          device->idp.reset();
+          return device->WriteFail(std::string("IDP:invalid description: ") + e.what());
+       }
+
+       if (!init_ok) {
           device->idp.reset();
           // Say which of the ways it was invalid, the way idpwrite and the
           // canProvision path below already do. A description that a JSON
