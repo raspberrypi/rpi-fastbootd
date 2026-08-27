@@ -14,6 +14,29 @@
 
 
 namespace {
+   // Collapse a multi-line message onto one line. jsoncpp's formatted parse
+   // errors span several lines and end in a newline; the fastboot status
+   // channel is a single line, so without this the reason arrives truncated at
+   // the first break.
+   std::string flattenLines(const std::string& in)
+   {
+      std::string out;
+      out.reserve(in.size());
+      bool pending_space = false;
+      for (char c : in) {
+         if (c == '\n' || c == '\r' || c == '\t') {
+            pending_space = !out.empty();
+            continue;
+         }
+         if (pending_space) {
+            out += ' ';
+            pending_space = false;
+         }
+         out += c;
+      }
+      return out;
+   }
+
    template<typename T>
       bool JCHK(const Json::Value& root, const char* key, T& out, std::string& error)
       {
@@ -178,6 +201,7 @@ namespace {
       }
 
       if (!layout.isMember("partitionimages")) {
+         error = "layout.partitionimages is missing";
          ERR("Partition images not found in layout");
          return false;
       }
@@ -351,14 +375,15 @@ class IDPparser::VersionedParser {
 };
 
 
-bool IDPparser::IGvalidate()
+bool IDPparser::IGvalidate(std::string& error)
 {
-   std::string str, error;
+   std::string str;
    IDPversion version;
    Json::Value obj;
 
    if (!checkIGCompat(root_, str, error)) {
       ERR("IG compat error: " << error);
+      error = "image generator block invalid: " + error;
       return false;
    }
 
@@ -367,6 +392,7 @@ bool IDPparser::IGvalidate()
    // Initialise and create IG parser
    if (!parseVersion(str, version, error)) {
       ERR("Invalid version format: " << error);
+      error = "cannot parse version '" + str + "': " + error;
       return false;
    }
 
@@ -381,6 +407,8 @@ bool IDPparser::IGvalidate()
       );
    } else {
       ERR("Unsupported IG major version: " << version.major);
+      error = "unsupported image generator major version " +
+              std::to_string(version.major) + " (this firmware understands 2)";
       return false;
    }
    IGversion_ = version;
@@ -388,6 +416,8 @@ bool IDPparser::IGvalidate()
    // Initiate IG parsing
    if (!IGparser_->parse(version, root_, error)) {
       ERR("Parsing error: " << error);
+      // parse() already describes the offending field; keep it verbatim rather
+      // than burying it under a generic prefix.
       return false;
    }
 
@@ -397,7 +427,12 @@ bool IDPparser::IGvalidate()
    MSG("image name: " << image_.name);
    MSG("image version: " << image_.version);
 
-   return walkTree();
+   if (!walkTree()) {
+      error = "partition tree could not be resolved";
+      return false;
+   }
+
+   return true;
 }
 
 
@@ -426,6 +461,8 @@ bool IDPparser::parseIGv2(const Json::Value& json, const IDPversion& version, st
 
    // Sane?
    if (sectors % 512 != 0) {
+      error = "IGconf_device_sector_size is " + std::to_string(sectors) +
+              ", which is not a multiple of 512";
       ERR("Unsupported sector size: " << sectors);
       return false;
    }
@@ -440,6 +477,8 @@ bool IDPparser::parseIGv2(const Json::Value& json, const IDPversion& version, st
    else if (storage.asString() == "nvme")
       image_.device_storage.type = IDPstorage::storage_type::NVME;
    else {
+      error = "IGconf_device_storage_type is '" + storage.asString() +
+              "', expected sd, emmc or nvme";
       ERR("Invalid device storage type: " << storage.asString());
       return false;
    }
@@ -455,6 +494,7 @@ bool IDPparser::parseIGv2(const Json::Value& json, const IDPversion& version, st
    }
 
    if (!image_.size) {
+      error = "attributes.image-size is zero";
       ERR("Image size reported as zero");
       return false;
    }
@@ -462,6 +502,8 @@ bool IDPparser::parseIGv2(const Json::Value& json, const IDPversion& version, st
    // Set partition table attrs
    size_t align = fromGIsz(str);
    if (align % (1024*1024) != 0) {
+      error = "attributes.image-palign-bytes is " + std::to_string(align) +
+              ", which is not a multiple of 1MiB";
       ERR("Partition alignment must be a multiple of 1MB.");
       return false;
    }
@@ -474,6 +516,8 @@ bool IDPparser::parseIGv2(const Json::Value& json, const IDPversion& version, st
    else if (ptable.asString() == "gpt")
       image_.device_storage.ptable_type = IDPptable_type::GPT;
    else {
+      error = "layout.partitiontable.label is '" + ptable.asString() +
+              "', expected dos or gpt";
       ERR("partitiontable: invalid 'label'");
       return false;
    }
@@ -481,6 +525,7 @@ bool IDPparser::parseIGv2(const Json::Value& json, const IDPversion& version, st
    const Json::Value& id = json["layout"]["partitiontable"]["id"];
 
    if (!id.isNull() && !id.isString()) {
+      error = "layout.partitiontable.id must be a string";
       ERR("partitiontable: 'id' must be a string");
       return false;
    }
@@ -513,6 +558,8 @@ bool IDPparser::parseIGv2(const Json::Value& json, const IDPversion& version, st
          }
       );
    } else {
+      error = "unsupported provisioning map major version " +
+              std::to_string(pmap_version.major) + " (this firmware understands 1)";
       ERR("Unsupported PMAP major version: " << pmap_version.major);
       return false;
    }
@@ -663,6 +710,7 @@ bool IDPparser::parsePMAPv1(const Json::Value& json, const IDPversion& version, 
 
    pnav_ = PartitionNavigator::create(version, pmap);
    if (!pnav_) {
+      error = "provisioning map could not be navigated; check the partition tree";
       ERR("Failed to bind pmap nav");
       return false;
    }
@@ -735,36 +783,40 @@ IDPparser::IDPparser()
 IDPparser::~IDPparser() = default;
 
 
-bool IDPparser::loadFile(const std::string& filePath)
+bool IDPparser::loadFile(const std::string& filePath, std::string& error)
 {
    std::ifstream file(filePath);
    if (!file.is_open()) {
+      error = "cannot open " + filePath;
       std::cerr << "Failed to open file: " << filePath << std::endl;
       return false;
    }
 
    std::string jsonContent((std::istreambuf_iterator<char>(file)),
          std::istreambuf_iterator<char>());
-   return loadJSON(jsonContent);
+   return loadJSON(jsonContent, error);
 }
 
 
-bool IDPparser::loadJSON(const std::string& json_string)
+bool IDPparser::loadJSON(const std::string& json_string, std::string& error)
 {
    Json::Reader reader;
    if (!reader.parse(json_string, root_)) {
-      ERR("Unable to parse JSON: " << reader.getFormattedErrorMessages());
+      // getFormattedErrorMessages() is multi-line and ends with a newline;
+      // flatten it so it survives a single-line transport intact.
+      error = "not valid JSON: " + flattenLines(reader.getFormattedErrorMessages());
+      ERR("Unable to parse JSON: " << error);
       return false;
    }
-   jvalid_ = IGvalidate();
+   jvalid_ = IGvalidate(error);
    return jvalid_;
 }
 
 
-bool IDPparser::loadData(const char* data, size_t length)
+bool IDPparser::loadData(const char* data, size_t length, std::string& error)
 {
    std::string jsonString(data, length);
-   return loadJSON(jsonString);
+   return loadJSON(jsonString, error);
 }
 
 

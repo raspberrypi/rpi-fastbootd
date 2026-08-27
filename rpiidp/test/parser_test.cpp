@@ -79,8 +79,9 @@ int main(int argc, char* argv[]) {
 
    IDPparser parser;
 
-   if (!parser.loadFile(filePath)) {
-      ERR("Load failed");
+   std::string error;
+   if (!parser.loadFile(filePath, error)) {
+      ERR("Load failed: " << error);
       return 1;
    }
 

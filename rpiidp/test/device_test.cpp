@@ -54,10 +54,12 @@ int main(int argc, char* argv[]) {
 
    IDPdevice dev;
 
-   if (!dev.Initialise(buffer.data(), buffer.size()))
-      return -1;
-
    std::string reason;
+   if (!dev.Initialise(buffer.data(), buffer.size(), reason)) {
+      ERR("Invalid description: " << reason);
+      return -1;
+   }
+
    bool ready = dev.canProvision(reason);
    MSG(ready ? "Ready for provisioning" : "Not ready for provisioning: " + reason);
    if (!ready)

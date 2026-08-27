@@ -194,26 +194,32 @@ IDPdevice::IDPdevice(std::optional<IDPkeyfile> lukskey)
 IDPdevice::~IDPdevice() = default;
 
 
-bool IDPdevice::Initialise(const char* jdata, size_t length)
+bool IDPdevice::Initialise(const char* jdata, size_t length, std::string& reason)
 {
-   if (getState() == IDPstate::Writing)
+   if (getState() == IDPstate::Writing) {
+      reason = "device is already writing";
       return false;
+   }
 
-   if (!jdata || !length)
+   if (!jdata || !length) {
+      reason = "no description staged";
       return false;
+   }
 
-   if (!parser_.loadData(jdata, length)) {
-      ERR("Parser data validation failed");
+   if (!parser_.loadData(jdata, length, reason)) {
+      ERR("Parser data validation failed: " << reason);
       return false;
    }
 
    if (!parser_.getImage(image_)) {
+      reason = "description parsed but carries no image definition";
       ERR("No image");
       return false;
    }
 
    partitions_ = parser_.getPartitions();
    if (partitions_.empty()) {
+      reason = "description defines no partitions to provision";
       ERR("No partitions");
       return false;
    }

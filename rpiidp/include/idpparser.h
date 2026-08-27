@@ -54,9 +54,13 @@ class IDPparser {
       IDPparser();
       ~IDPparser();
 
-      bool loadJSON(const std::string& json_string);
-      bool loadFile(const std::string& filePath);
-      bool loadData(const char* data, size_t length);
+      // Each reports why it failed through `error`, in prose meant to reach
+      // whoever staged the description -- over the wire, not just into the
+      // device's own log. The detail already existed at every step; it was
+      // simply discarded at the top.
+      bool loadJSON(const std::string& json_string, std::string& error);
+      bool loadFile(const std::string& filePath, std::string& error);
+      bool loadData(const char* data, size_t length, std::string& error);
       bool getImage(IDPimage& out) const;
       std::vector<IDPpartition> getPartitions() const;
 
@@ -74,7 +78,7 @@ class IDPparser {
       bool parseIGv2(const Json::Value& json, const IDPversion& version, std::string& error);
       bool parsePMAPv1(const Json::Value& json, const IDPversion& version, std::string& error);
 
-      bool IGvalidate();
+      bool IGvalidate(std::string& error);
       bool jvalid_;
 
       const Json::Value& getJSON(const std::vector<std::string>& keys) const;
