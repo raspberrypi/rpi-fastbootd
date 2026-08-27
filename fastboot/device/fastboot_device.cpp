@@ -126,6 +126,25 @@ bool FastbootDevice::WriteStatus(FastbootResult result, const std::string& messa
     memcpy(buf, kResultStrings[static_cast<size_t>(result)], kResponseReasonSize);
     memcpy(buf + kResponseReasonSize, message.c_str(), msg_len);
 
+    // A silently clipped message reads as a whole one, which is worse than a
+    // short message: the reader cannot tell a complete reason from half of a
+    // different one. Mark the cut so it is visible, and say so in the log where
+    // the whole text still exists.
+    //
+    // Only for the human-facing results. An OKAY payload is a value the client
+    // parses -- getvar, among others -- so it stays byte-exact and a caller
+    // that overruns the buffer there has a bug this must not paper over.
+    if (message.size() > msg_len) {
+        LOG(WARNING) << "Response truncated to " << msg_len << " bytes: " << message;
+        if (result == FastbootResult::FAIL || result == FastbootResult::INFO) {
+            constexpr char kEllipsis[] = "...";
+            constexpr size_t kEllipsisLen = sizeof(kEllipsis) - 1;
+            static_assert(kMaxMessageSize > kEllipsisLen,
+                          "response buffer too small to mark a truncated message");
+            memcpy(buf + kResponseReasonSize + msg_len - kEllipsisLen, kEllipsis, kEllipsisLen);
+        }
+    }
+
     size_t response_len = kResponseReasonSize + msg_len;
     auto write_ret = this->get_transport()->Write(buf, response_len);
     if (write_ret != static_cast<ssize_t>(response_len)) {
@@ -193,19 +212,13 @@ void FastbootDevice::ExecuteCommands() {
             WriteStatus(FastbootResult::FAIL, "Unrecognized command " + args[0]);
             continue;
         }
-        // Backstop. Command handlers reach parsers and libraries that throw on
-        // malformed input, and an exception escaping here has nowhere to go:
-        // there is no handler between this loop and main(), on any of the three
-        // paths that call it, so it would terminate fastbootd. Losing the
-        // daemon mid-session is far worse than refusing one command -- the
-        // device drops off the bus and the host sees a transport failure
-        // instead of a reason.
+        // Backstop: nothing between here and main() catches, so an exception
+        // out of a handler would terminate fastbootd. Losing the daemon
+        // mid-session costs the host its transport and any reason with it.
         //
-        // The session ends rather than continuing, because an exception means
-        // the handler stopped somewhere it did not choose to and this loop
-        // cannot know what state it left behind. The client reconnects to a
-        // clean device. Handlers that can describe their own failure should
-        // still catch it themselves and carry on.
+        // End the session rather than continue: the handler stopped somewhere
+        // it did not choose to, and this loop cannot know what it left behind.
+        // Handlers that can clean up after themselves should still do so.
         bool keep_going = false;
         try {
             keep_going = found_command->second(this, args);

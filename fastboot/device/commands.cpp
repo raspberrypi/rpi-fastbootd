@@ -519,12 +519,9 @@ namespace {
 
        device->idp = std::make_unique<IDPdevice>();
 
-       // A description is untrusted input and the parser reaches library calls
-       // that throw on malformed values -- an unreadable size suffix, a
-       // non-integer LUKS key_size, a non-numeric provisionmap key. Catch here,
-       // where the half-initialised IDPdevice can still be discarded; letting
-       // it escape would leave device->idp set on a device whose state nobody
-       // can describe, and take fastbootd down with it.
+       // The parser reaches library calls that throw on malformed values.
+       // Catch here, where the half-initialised IDPdevice can still be
+       // discarded; escaping this frame would terminate fastbootd.
        std::string init_reason;
        bool init_ok = false;
        try {
@@ -537,12 +534,8 @@ namespace {
 
        if (!init_ok) {
           device->idp.reset();
-          // Say which of the ways it was invalid, the way idpwrite and the
-          // canProvision path below already do. A description that a JSON
-          // schema accepts can still be rejected here -- the firmware checks
-          // things a schema cannot express, like sector size and partition
-          // alignment -- so "invalid description" on its own left no way to
-          // tell a typo from an unsupported version from a semantic limit.
+          // A description a JSON schema accepts can still be rejected here,
+          // so name which check failed.
           return device->WriteFail("IDP:invalid description: " + init_reason);
        }
 

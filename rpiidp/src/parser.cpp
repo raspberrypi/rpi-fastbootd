@@ -409,7 +409,7 @@ bool IDPparser::IGvalidate(std::string& error)
    } else {
       ERR("Unsupported IG major version: " << version.major);
       error = "unsupported image generator major version " +
-              std::to_string(version.major) + " (this firmware understands 2)";
+              std::to_string(version.major);
       return false;
    }
    IGversion_ = version;
@@ -478,8 +478,7 @@ bool IDPparser::parseIGv2(const Json::Value& json, const IDPversion& version, st
    else if (storage.asString() == "nvme")
       image_.device_storage.type = IDPstorage::storage_type::NVME;
    else {
-      error = "IGconf_device_storage_type is '" + storage.asString() +
-              "', expected sd, emmc or nvme";
+      error = "unsupported IGconf_device_storage_type '" + storage.asString() + "'";
       ERR("Invalid device storage type: " << storage.asString());
       return false;
    }
@@ -574,7 +573,7 @@ bool IDPparser::parseIGv2(const Json::Value& json, const IDPversion& version, st
       );
    } else {
       error = "unsupported provisioning map major version " +
-              std::to_string(pmap_version.major) + " (this firmware understands 1)";
+              std::to_string(pmap_version.major);
       ERR("Unsupported PMAP major version: " << pmap_version.major);
       return false;
    }

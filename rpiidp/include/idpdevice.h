@@ -60,10 +60,8 @@ class IDPdevice {
       IDPdevice(std::optional<IDPkeyfile> lukskey = std::nullopt);
       ~IDPdevice();
 
-      // Reports why it rejected the description through `reason`, the way
-      // canProvision() already does. Five distinct failures previously shared
-      // one message, and the detail that separated them reached only this
-      // device's own stderr.
+      // Reports why it rejected the description through `reason`, as
+      // canProvision() does.
       bool Initialise(const char* jdata, size_t length, std::string& reason);
       bool canProvision(std::string& reason);
       bool startProvision(std::string& reason);

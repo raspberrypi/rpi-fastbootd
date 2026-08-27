@@ -54,10 +54,8 @@ class IDPparser {
       IDPparser();
       ~IDPparser();
 
-      // Each reports why it failed through `error`, in prose meant to reach
-      // whoever staged the description -- over the wire, not just into the
-      // device's own log. The detail already existed at every step; it was
-      // simply discarded at the top.
+      // Report the reason through `error`, so it can reach whoever staged
+      // the description rather than only this device's log.
       bool loadJSON(const std::string& json_string, std::string& error);
       bool loadFile(const std::string& filePath, std::string& error);
       bool loadData(const char* data, size_t length, std::string& error);
