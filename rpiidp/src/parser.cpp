@@ -1,3 +1,4 @@
+#include <exception>
 #include <fstream>
 #include <iostream>
 #include <cstring>
@@ -499,8 +500,22 @@ bool IDPparser::parseIGv2(const Json::Value& json, const IDPversion& version, st
       return false;
    }
 
-   // Set partition table attrs
-   size_t align = fromGIsz(str);
+   // Set partition table attrs.
+   //
+   // fromGIsz() throws on a size it cannot read, and a description is
+   // untrusted input: "1MB" instead of "1M" is an ordinary typo. Nothing above
+   // this catches, so letting it escape would take fastbootd down rather than
+   // rejecting the description.
+   size_t align = 0;
+   try {
+      align = fromGIsz(str);
+   }
+   catch (const std::exception& e) {
+      error = std::string("attributes.image-palign-bytes is unreadable: ") + e.what();
+      ERR("Invalid partition alignment: " << e.what());
+      return false;
+   }
+
    if (align % (1024*1024) != 0) {
       error = "attributes.image-palign-bytes is " + std::to_string(align) +
               ", which is not a multiple of 1MiB";
