@@ -437,7 +437,7 @@ namespace {
             return device->WriteStatus(FastbootResult::FAIL, "Failed to create disk label." PARTINIT_USAGE);
         }
 
-        result = disk.commit();
+        result = disk.commitAndReread();
         if (!result) {
             return device->WriteStatus(FastbootResult::FAIL, "Error writing PT." PARTINIT_USAGE);
         }
@@ -497,8 +497,8 @@ namespace {
             return device->WriteStatus(FastbootResult::FAIL, "Failed to append partition. " PARTAPP_USAGE);
         }
 
-        if (!disk.commit()) {
-            return device->WriteStatus(FastbootResult::FAIL, "Error writing PT." PARTINIT_USAGE);
+        if (!disk.commitAndReread()) {
+            return device->WriteStatus(FastbootResult::FAIL, "Error writing PT." PARTAPP_USAGE);
         }
 
         return device->WriteStatus(FastbootResult::OKAY, "Wrote new partition.");

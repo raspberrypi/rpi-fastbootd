@@ -88,9 +88,34 @@ public:
     /**
      * @brief Write all partition table changes in memory to disk
      *
+     * Writing the table does not make the kernel adopt it. Unless the caller
+     * has its own re-read step, prefer commitAndReread().
+     *
      * @return True on success. False on failure.
      */
     bool commit();
+
+    /**
+     * @brief Write partition table changes to disk and have the kernel adopt them
+     *
+     * commit() alone leaves the kernel serving the partition table it read
+     * earlier, so /dev/<dev>pN keeps the offsets and sizes of the previous
+     * layout. Anything acting on a partition number afterwards - mkfs,
+     * cryptsetup, a size query - then silently operates on the old geometry.
+     *
+     * Closes the device, so the fd held while the table was rewritten cannot
+     * block the re-read, then retries BLKRRPART while it reports EBUSY. A
+     * partition still held open elsewhere - a stale device-mapper node, a
+     * mount - keeps the old table in place, and is reported as a failure
+     * rather than left for the caller to trip over.
+     *
+     * The device is left closed. Re-open it to continue partitioning.
+     *
+     * @param timeout_sec How long to keep retrying while the device is busy
+     *
+     * @return True on success. False on failure.
+     */
+    bool commitAndReread(int timeout_sec = 5);
 
     /**
      * @brief Instruct the kernel to re-read the partition table on the device

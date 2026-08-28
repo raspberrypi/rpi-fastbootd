@@ -5,6 +5,9 @@
 #include <cerrno>
 #include <cstdlib>
 #include <cstring>
+#include <fcntl.h>
+#include <linux/fs.h>
+#include <sys/ioctl.h>
 #include <unistd.h>
 
 
@@ -27,6 +30,22 @@ namespace {
       return !digits.empty() && std::all_of(digits.begin(), digits.end(), [](unsigned char c) {
          return c == '0';
       });
+   }
+
+   // Ask the kernel to re-read the partition table. Reports the failing errno
+   // so callers can tell a busy device from a real error.
+   bool blkrrpart(const std::string& device_path, int* err) {
+      int fd = open(device_path.c_str(), O_RDONLY | O_CLOEXEC);
+      if (fd < 0) {
+         *err = errno;
+         return false;
+      }
+
+      int ret = ioctl(fd, BLKRRPART);
+      *err = ret ? errno : 0;
+      close(fd);
+
+      return ret == 0;
    }
 }
 
@@ -296,6 +315,48 @@ bool RPIparted::commit() {
    }
 
    return (ret == 0) ? true : false;
+}
+
+
+bool RPIparted::commitAndReread(int timeout_sec) {
+   if (!context_) {
+      ERR("Bad context");
+      return false;
+   }
+
+   const char* devname = fdisk_get_devname(context_.get());
+   if (!devname) {
+      ERR("No device assigned");
+      return false;
+   }
+   const std::string device_path(devname);
+
+   if (!commit()) {
+      return false;
+   }
+
+   // Drops libfdisk's fd, which was opened before the table was rewritten,
+   // and flushes the write.
+   closeDevice();
+
+   const int interval_ms = 100;
+   const int max_attempts = std::max(1, timeout_sec * 1000 / interval_ms);
+   int err = 0;
+
+   for (int i = 0; i < max_attempts; ++i) {
+      if (blkrrpart(device_path, &err)) {
+         return true;
+      }
+      if (err != EBUSY) {
+         break;
+      }
+      usleep(interval_ms * 1000);
+   }
+
+   ERR("Kernel did not re-read the partition table on " << device_path
+         << ": " << err << " (" << std::strerror(err) << ")");
+
+   return false;
 }
 
 
