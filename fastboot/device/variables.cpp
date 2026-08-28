@@ -191,7 +191,7 @@ namespace {
         std::string otp_dump;
         posix_spawn_file_actions_t action;
         posix_spawn_file_actions_init(&action);
-        posix_spawn_file_actions_addopen(&action, STDOUT_FILENO, "/tmp/otp.log", O_WRONLY | O_CREAT, 0644);
+        posix_spawn_file_actions_addopen(&action, STDOUT_FILENO, "/tmp/otp.log", O_WRONLY | O_CREAT | O_TRUNC, 0644);
         posix_spawn_file_actions_adddup2(&action, STDOUT_FILENO, STDERR_FILENO);
     
         char *arg[] = {"/usr/bin/vcgencmd", "otp_dump", NULL};
@@ -314,21 +314,84 @@ namespace {
         return result;
     }
 
-    // Helper to extract MAC address from OTP registers
+    // Helper to extract MAC address from OTP registers.
+    //
+    // Blank rows are reported as an empty string rather than as
+    // 00:00:00:00:00:00. A part whose MAC OTP was never programmed is a real
+    // case -- pre-production silicon, and any SKU without the radio at all for
+    // mac-wifi/mac-bt -- and a zero MAC reads downstream as a measurement
+    // rather than as the absence of one.
     bool GetMacFromOtp(const std::string& low_key, const std::string& high_key, std::string* message) {
-        std::string mac_lo, mac_hi;
+        std::string mac_lo, mac_hi, otp_error;
         uint required = 2;
         inspectOtp([&](std::string *key, std::string *value) {
             if (*key == low_key) {
-                mac_lo = FormatMacPart(value->substr(0, 4));
+                mac_lo = value->substr(0, 4);
                 required--;
             } else if (*key == high_key) {
-                mac_hi = FormatMacPart(*value);
+                mac_hi = *value;
                 required--;
             }
             return !required;  // Return true when both found
-        }, message);
-        *message = mac_hi + ":" + mac_lo;
+        }, &otp_error);
+
+        // inspectOtp writes to its message only when the dump itself failed, so
+        // a missing row leaves it empty. Either way this is a failed read, not
+        // a device without a MAC, and must not be answered with a MAC-shaped
+        // string.
+        if (required) {
+            *message = otp_error.empty()
+                    ? "otp_dump did not report rows " + low_key + "/" + high_key
+                    : otp_error;
+            return false;
+        }
+
+        if (mac_hi.find_first_not_of('0') == std::string::npos &&
+            mac_lo.find_first_not_of('0') == std::string::npos) {
+            message->clear();
+            return true;
+        }
+
+        *message = FormatMacPart(mac_hi) + ":" + FormatMacPart(mac_lo);
+        return true;
+    }
+
+    // The wired MAC the firmware actually settled on, from the device tree.
+    //
+    // OTP is not the last word on it. Where the MAC rows were never programmed
+    // the firmware falls back to a serial-derived b8:27:eb:xx:xx:xx, and that,
+    // not the blank OTP, is the address the board presents on the network. The
+    // bootloader records its choice in the ethernet node as local-mac-address,
+    // six raw bytes, on every part that has a built-in interface; parts that
+    // reach ethernet over USB (Pi 3 and earlier) have no such node, and fall
+    // back to OTP.
+    bool GetMacFromDeviceTree(std::string* message) {
+        std::string alias;
+        if (!android::base::ReadFileToString("/proc/device-tree/aliases/ethernet0", &alias)) {
+            return false;
+        }
+        // Device tree strings carry their trailing NUL into the file contents.
+        alias.erase(std::find(alias.begin(), alias.end(), '\0'), alias.end());
+        if (alias.empty()) {
+            return false;
+        }
+
+        std::string mac;
+        if (!android::base::ReadFileToString("/proc/device-tree" + alias + "/local-mac-address", &mac) ||
+            mac.size() != 6) {
+            return false;
+        }
+        // An all-zero node is no more usable than an all-zero OTP row; let the
+        // OTP path answer instead.
+        if (mac.find_first_not_of('\0') == std::string::npos) {
+            return false;
+        }
+
+        *message = android::base::StringPrintf(
+                "%02x:%02x:%02x:%02x:%02x:%02x",
+                static_cast<uint8_t>(mac[0]), static_cast<uint8_t>(mac[1]),
+                static_cast<uint8_t>(mac[2]), static_cast<uint8_t>(mac[3]),
+                static_cast<uint8_t>(mac[4]), static_cast<uint8_t>(mac[5]));
         return true;
     }
 
@@ -1004,6 +1067,9 @@ namespace {
 
 bool GetMacEthernet(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
                     std::string* message) {
+    if (GetMacFromDeviceTree(message)) {
+        return true;
+    }
     return GetMacFromOtp("50", "51", message);
 }
 
