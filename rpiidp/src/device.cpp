@@ -512,7 +512,10 @@ bool IDPdevice::validateDeviceReadiness() const
    // Make sure the kernel doesn't think the storage device we're going to
    // write to during provisioning is in use. We can't proceed safely unless
    // this check passes.
-   if (!utils::ReReadPartitionTable(image_.device_storage.BlockDev())) {
+   // A single attempt, deliberately: this is a probe for whether anything holds
+   // the disk, not a re-read we need to land, and retrying would only wait out
+   // the very condition it is meant to detect.
+   if (rpiparted::rereadPartitionTable(image_.device_storage.BlockDev(), 0) != 0) {
       ERR("Device storage for provisioning is in use: " <<
             image_.device_storage.BlockDev());
       return false;
@@ -712,7 +715,7 @@ bool IDPdeviceWriter::InitPhysicalPartitions(std::string& reason)
 
    // Wait for a successful re-read of the partition table. This should
    // guarantee kernel, udev etc have updated device nodes, internal states, etc
-   if (!utils::WaitReReadPartitionTable(device_->image_.device_storage.BlockDev())) {
+   if (rpiparted::rereadPartitionTable(device_->image_.device_storage.BlockDev()) != 0) {
       reason = "timed out re-reading partition table on " + device_->image_.device_storage.BlockDev();
       ERR("Timed out re-reading partition table on storage device: " <<
             device_->image_.device_storage.BlockDev());

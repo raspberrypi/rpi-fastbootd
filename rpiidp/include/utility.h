@@ -14,9 +14,5 @@ namespace utils {
 
    bool WaitUdevBlockDev(const std::string& dev, int timeout_ms = 5000);
 
-   bool ReReadPartitionTable(const std::string& dev);
-
-   bool WaitReReadPartitionTable(const std::string& dev, int timeout_seconds = 5);
-
    std::vector<char*> to_execvp_argv(const std::vector<std::string>& args);
 }
