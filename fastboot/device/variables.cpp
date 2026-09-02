@@ -246,28 +246,98 @@ namespace {
         }, message);
         return found;
     }
+
+    // The board revision code, whose bit fields name the model, SoC, memory
+    // size and manufacturer.
+    //
+    // The firmware publishes it in the device tree, and that is the only
+    // source that is right on every part: the OTP row it comes from is not
+    // the same one across SoCs. On BCM2712 it is row 32; on BCM2711 and
+    // earlier it is row 30, and row 32 there is not the revision code at all.
+    // Reading row 32 unconditionally is what made a CM4 report itself as
+    // "Unsupported Board: 0x0" with a BCM2835 in it (#352).
+    //
+    // Where the device tree is unavailable, fall back to OTP and disambiguate
+    // by bit 23, the flag that marks a new-style revision code -- the same
+    // test rpi-otp-private-key applies before trusting the value.
+    bool GetBoardRevisionCode(uint32_t* revision, std::string* error) {
+        static constexpr const char* kDtPath = "/proc/device-tree/system/linux,revision";
+        std::string dt;
+        if (android::base::ReadFileToString(kDtPath, &dt) && dt.size() == sizeof(uint32_t)) {
+            uint32_t be = 0;
+            memcpy(&be, dt.data(), sizeof(be));
+            *revision = __builtin_bswap32(be);
+            return true;
+        }
+
+        // Row 32 first: a BCM2712 part is the one most likely to be missing
+        // the node, since it is also the family whose OTP layout this daemon
+        // was originally written against.
+        for (const char* row : {"32", "30"}) {
+            std::string value;
+            if (!GetOtpRegisterBitField(row, 0xFFFFFFFF, 0, &value)) {
+                continue;
+            }
+            uint32_t candidate = 0;
+            if (sscanf(value.c_str(), "0x%" SCNx32, &candidate) != 1) {
+                continue;
+            }
+            if (candidate & (1u << 23)) {
+                *revision = candidate;
+                return true;
+            }
+        }
+
+        *error = "no board revision code in device tree or OTP";
+        return false;
+    }
+
+    // Report one bit field of the revision code as getvar expects it: "0x"
+    // followed by uppercase hex, zero-padded to the width of the field, so a
+    // consumer matching on the value sees a stable number of digits.
+    bool GetRevisionBitField(uint32_t mask, int shift, std::string* message) {
+        uint32_t revision = 0;
+        if (!GetBoardRevisionCode(&revision, message)) {
+            return false;
+        }
+        int digits = 0;
+        for (uint32_t field = mask >> shift; field; field >>= 4) {
+            digits++;
+        }
+        *message = android::base::StringPrintf("0x%0*X", digits, (revision & mask) >> shift);
+        return true;
+    }
+
+    // Whether this is a BCM2712 part, from the revision code's processor
+    // field. The OTP row numbering for the MAC addresses differs across that
+    // boundary, so a caller that means to read those rows must ask first.
+    bool IsBcm2712() {
+        uint32_t revision = 0;
+        std::string error;
+        if (!GetBoardRevisionCode(&revision, &error)) {
+            return false;
+        }
+        return ((revision & 0xF000) >> 12) == 0x4;
+    }
 } // namespace
 
 bool GetRevisionProcessor(FastbootDevice * /* device */, const std::vector<std::string> & /* args */,
                           std::string *message)
 {
-    GetOtpRegisterBitField("32", 0xF000, 12, message);
-    return true;
+    return GetRevisionBitField(0xF000, 12, message);
 }
 
 bool GetRevisionManufacturer(FastbootDevice * /* device */, const std::vector<std::string> & /* args */,
                              std::string *message)
 {
-    GetOtpRegisterBitField("32", 0xF0000, 16, message);
-    return true;
+    return GetRevisionBitField(0xF0000, 16, message);
 }
 
 bool GetRevisionMemory(FastbootDevice * /* device */, const std::vector<std::string> & /* args */,
                        std::string *message)
 {
-    GetOtpRegisterBitField("32", 0x700000, 20, message);
-            return true;
-        }
+    return GetRevisionBitField(0x700000, 20, message);
+}
 
 bool GetSdramSizeBytes(FastbootDevice * /* device */, const std::vector<std::string> & /* args */,
                        std::string *message)
@@ -293,15 +363,13 @@ bool GetSdramSizeBytes(FastbootDevice * /* device */, const std::vector<std::str
 bool GetRevisionType(FastbootDevice * /* device */, const std::vector<std::string> & /* args */,
                      std::string *message)
 {
-    GetOtpRegisterBitField("32", 0x0FF0, 4, message);
-    return true;
+    return GetRevisionBitField(0x0FF0, 4, message);
 }
 
 bool GetRevisionRevision(FastbootDevice * /* device */, const std::vector<std::string> & /* args */,
                        std::string *message)
 {
-    GetOtpRegisterBitField("32", 0x0F, 0, message);
-    return true;
+    return GetRevisionBitField(0x0F, 0, message);
 }
 
 namespace {
@@ -356,18 +424,26 @@ namespace {
         return true;
     }
 
-    // The wired MAC the firmware actually settled on, from the device tree.
+    // The address the firmware actually settled on, from the device tree.
     //
     // OTP is not the last word on it. Where the MAC rows were never programmed
-    // the firmware falls back to a serial-derived b8:27:eb:xx:xx:xx, and that,
-    // not the blank OTP, is the address the board presents on the network. The
-    // bootloader records its choice in the ethernet node as local-mac-address,
-    // six raw bytes, on every part that has a built-in interface; parts that
-    // reach ethernet over USB (Pi 3 and earlier) have no such node, and fall
-    // back to OTP.
-    bool GetMacFromDeviceTree(std::string* message) {
+    // the firmware falls back to a serial-derived address, and that, not the
+    // blank OTP, is what the board presents. The bootloader records its choice
+    // in the interface's node on every part that has that interface built in,
+    // and the aliases block names the node, so the path does not have to be
+    // known per SoC: ethernet0, wifi0 and bluetooth all resolve there.
+    //
+    // Byte order is not the same for all three. local-mac-address is
+    // most-significant byte first; local-bd-address, per its binding, is
+    // least-significant byte first, so a Bluetooth address has to be reversed
+    // to read the way the other two do. Verified on a Pi 5 whose OTP rows
+    // 50-55 give 2c:cf:67:e6:d5:e5/e6/e7: the bluetooth node holds
+    // e7 d5 e6 67 cf 2c.
+    bool GetMacFromDeviceTree(const char* alias_name, const char* property, bool lsb_first,
+                              std::string* message) {
         std::string alias;
-        if (!android::base::ReadFileToString("/proc/device-tree/aliases/ethernet0", &alias)) {
+        if (!android::base::ReadFileToString(std::string("/proc/device-tree/aliases/") + alias_name,
+                                             &alias)) {
             return false;
         }
         // Device tree strings carry their trailing NUL into the file contents.
@@ -377,7 +453,7 @@ namespace {
         }
 
         std::string mac;
-        if (!android::base::ReadFileToString("/proc/device-tree" + alias + "/local-mac-address", &mac) ||
+        if (!android::base::ReadFileToString("/proc/device-tree" + alias + "/" + property, &mac) ||
             mac.size() != 6) {
             return false;
         }
@@ -385,6 +461,9 @@ namespace {
         // OTP path answer instead.
         if (mac.find_first_not_of('\0') == std::string::npos) {
             return false;
+        }
+        if (lsb_first) {
+            std::reverse(mac.begin(), mac.end());
         }
 
         *message = android::base::StringPrintf(
@@ -1065,24 +1144,54 @@ namespace {
     }
 } // namespace
 
+// The MAC addresses, device tree first and OTP only as a fallback.
+//
+// OTP rows 50-55 hold the ethernet, Wi-Fi and Bluetooth addresses on BCM2712
+// alone. On BCM2711 and earlier that span is the SHA256 of the secure-boot RSA
+// public key (rows 47-54) and the bootloader's secure-boot flags (row 55), so
+// reading it there does not merely give the wrong answer -- on a signed part it
+// gives a MAC-shaped rendering of the key hash, which a manufacturing database
+// would record as a real address. The rows are only consulted once the revision
+// code says BCM2712.
+//
+// Pre-BCM2712 parts have no OTP fallback here. Their documented MAC rows are
+// 64-65, a single "if set" override of the serial-derived address, and this
+// daemon has no verified reading of how those two rows are packed -- guessing
+// at it would reintroduce exactly the failure above. The device tree answers
+// for every such part that has the interface built in, which is the case that
+// matters; anything else is reported as a failed read rather than a guess.
+namespace {
+    bool GetMacPreferringDeviceTree(const char* alias_name, const char* property, bool lsb_first,
+                                    const char* otp_low, const char* otp_high,
+                                    std::string* message) {
+        if (GetMacFromDeviceTree(alias_name, property, lsb_first, message)) {
+            return true;
+        }
+        if (!IsBcm2712()) {
+            *message = std::string("no ") + property + " in device tree alias " + alias_name +
+                       ", and OTP rows " + otp_low + "/" + otp_high +
+                       " are not MAC addresses on this SoC";
+            return false;
+        }
+        return GetMacFromOtp(otp_low, otp_high, message);
+    }
+} // namespace
+
 bool GetMacEthernet(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
                     std::string* message) {
-    if (GetMacFromDeviceTree(message)) {
-        return true;
-    }
-    return GetMacFromOtp("50", "51", message);
+    return GetMacPreferringDeviceTree("ethernet0", "local-mac-address", false, "50", "51", message);
 }
 
 bool GetMacWifi(FastbootDevice * /* device */, const std::vector<std::string> & /* args */,
                 std::string *message)
 {
-    return GetMacFromOtp("52", "53", message);
+    return GetMacPreferringDeviceTree("wifi0", "local-mac-address", false, "52", "53", message);
 }
 
 bool GetMacBt(FastbootDevice * /* device */, const std::vector<std::string> & /* args */,
               std::string *message)
 {
-    return GetMacFromOtp("54", "55", message);
+    return GetMacPreferringDeviceTree("bluetooth", "local-bd-address", true, "54", "55", message);
 }
 
 bool GetMmcCid(FastbootDevice * /* device */, const std::vector<std::string> & /* args */,
