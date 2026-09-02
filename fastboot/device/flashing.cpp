@@ -34,6 +34,8 @@
 #include <android-base/strings.h>
 #include <sparse/sparse.h>
 
+#include "rpiparted.h"
+
 #include "fastboot_device.h"
 #include "partition_lock_manager.h"
 #include "utility.h"
@@ -244,14 +246,30 @@ int Flash(FastbootDevice* device, const std::string& partition_name, std::string
     // writing the bytes doesn't update the kernel's in-memory view of it: the
     // stale /dev/<disk>pN nodes linger and the new layout's nodes never appear.
     // Tell the kernel to re-read so any follow-up command this session sees the
-    // new partitions. Best-effort, like the erase path — the data is already on
-    // disk and IDP performs the authoritative re-read before partitioning. Only
-    // attempted for whole-disk targets; BLKRRPART is a no-op (EINVAL) on a
-    // partition fd.
+    // new partitions. Only attempted for whole-disk targets; BLKRRPART is a
+    // no-op (EINVAL) on a partition fd.
+    //
+    // This is not best-effort. A caller that flashes a disk image and then
+    // reaches into the filesystem it just wrote -- rpi-imager mounts p1 to
+    // apply OS customisation, and a segmented image flashes the disk several
+    // times over before it gets there -- reads the previous layout's offsets if
+    // the kernel never adopted the new table, and its page cache for the old
+    // partitions is stale too. Reporting OKAY here and letting that surface
+    // later as an unexplained mount failure is worse than failing the command
+    // that actually went wrong: the bytes are on disk either way, but only this
+    // function knows the kernel disagrees about where they are.
     if (result == 0 && IsWholeDisk(partition_path)) {
-        if (ioctl(handle.fd(), BLKRRPART) < 0) {
-            PLOG(WARNING) << "BLKRRPART re-read after whole-disk flash of " << partition_path
-                          << " failed; new partition nodes may be stale until IDP re-reads";
+        int rr = rpiparted::rereadPartitionTable(handle.fd());
+        if (rr != 0) {
+            LOG(ERROR) << "BLKRRPART re-read after whole-disk flash of " << partition_path
+                       << " failed: " << strerror(rr);
+            SetErr(err, "wrote " + partition_path +
+                            " but the kernel would not re-read its partition table: " +
+                            strerror(rr) +
+                            (rr == EBUSY ? " -- a partition is still open (a mount left behind, or"
+                                           " a device-mapper node); unmount it and flash again"
+                                         : ""));
+            return -rr;
         }
     }
     return result;
