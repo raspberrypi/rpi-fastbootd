@@ -396,9 +396,17 @@ bool EraseHandler(FastbootDevice* device, const std::vector<std::string>& args) 
     }
     if (android::wipe_block_device(handle.fd()) == 0) {
         // Inform the kernel that the partition table has changed so it
-        // drops stale partition device nodes.  Ignore errors — this is
-        // best-effort and will be retried by IDP before partitioning.
-        ioctl(handle.fd(), BLKRRPART);
+        // drops stale partition device nodes. Retried while the disk reports
+        // busy, since the wipe itself leaves udev walking the nodes it is
+        // about to remove. Still best-effort: unlike the flash path there is
+        // no new table to adopt here, only nodes to drop, and IDP performs the
+        // authoritative re-read before partitioning.
+        int rr = rpiparted::rereadPartitionTable(handle.fd());
+        if (rr != 0) {
+            LOG(WARNING) << "BLKRRPART re-read after erase of " << partition_name
+                         << " failed: " << strerror(rr)
+                         << "; stale partition nodes may persist until IDP re-reads";
+        }
 
             return device->WriteStatus(FastbootResult::OKAY, "Erasing succeeded");
         // } else {
