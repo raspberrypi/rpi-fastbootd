@@ -32,22 +32,46 @@ namespace {
       });
    }
 
-   // Ask the kernel to re-read the partition table. Reports the failing errno
-   // so callers can tell a busy device from a real error.
-   bool blkrrpart(const std::string& device_path, int* err) {
-      int fd = open(device_path.c_str(), O_RDONLY | O_CLOEXEC);
-      if (fd < 0) {
-         *err = errno;
-         return false;
-      }
-
-      int ret = ioctl(fd, BLKRRPART);
-      *err = ret ? errno : 0;
-      close(fd);
-
-      return ret == 0;
-   }
 }
+
+
+namespace rpiparted {
+
+int rereadPartitionTable(int fd, int timeout_sec) {
+   // Flush our own writes first: the kernel is about to parse the table off
+   // the disk, so it has to be the table we wrote.
+   sync();
+
+   const int interval_ms = 100;
+   const int max_attempts = std::max(1, timeout_sec * 1000 / interval_ms);
+   int err = 0;
+
+   for (int i = 0; i < max_attempts; ++i) {
+      if (ioctl(fd, BLKRRPART) == 0) {
+         return 0;
+      }
+      err = errno;
+      if (err != EBUSY) {
+         break;
+      }
+      usleep(interval_ms * 1000);
+   }
+
+   return err ? err : EIO;
+}
+
+int rereadPartitionTable(const std::string& dev, int timeout_sec) {
+   int fd = open(dev.c_str(), O_RDONLY | O_CLOEXEC);
+   if (fd < 0) {
+      return errno ? errno : EIO;
+   }
+   // Captured before close(), which is not obliged to preserve errno.
+   const int err = rereadPartitionTable(fd, timeout_sec);
+   close(fd);
+   return err;
+}
+
+} // namespace rpiparted
 
 
 FdiskContextDeleter::FdiskContextDeleter(bool* assigned)
@@ -339,18 +363,9 @@ bool RPIparted::commitAndReread(int timeout_sec) {
    // and flushes the write.
    closeDevice();
 
-   const int interval_ms = 100;
-   const int max_attempts = std::max(1, timeout_sec * 1000 / interval_ms);
-   int err = 0;
-
-   for (int i = 0; i < max_attempts; ++i) {
-      if (blkrrpart(device_path, &err)) {
-         return true;
-      }
-      if (err != EBUSY) {
-         break;
-      }
-      usleep(interval_ms * 1000);
+   const int err = rpiparted::rereadPartitionTable(device_path, timeout_sec);
+   if (err == 0) {
+      return true;
    }
 
    ERR("Kernel did not re-read the partition table on " << device_path
@@ -360,18 +375,3 @@ bool RPIparted::commitAndReread(int timeout_sec) {
 }
 
 
-bool RPIparted::rereadPartitionTable() {
-   if (!context_) {
-      ERR("Bad context");
-      return false;
-   }
-
-   int ret = fdisk_reread_partition_table(context_.get());
-
-   if (ret != 0) {
-      ERR("Error re-reading partition table: "
-            << errno << " (" << std::strerror(errno) << ")");
-   }
-
-   return (ret == 0) ? true : false;
-}

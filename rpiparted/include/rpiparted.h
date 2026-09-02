@@ -35,6 +35,37 @@ struct PartitionAttributes {
     std::optional<std::string> partuuid;
 };
 
+// Ask the kernel to adopt the partition table now on disk.
+//
+// This is the one implementation of that operation. Writing a table, or writing
+// an image that carries one, does not change the kernel's in-memory view of it:
+// /dev/<dev>pN keeps the offsets and sizes of the previous layout, and anything
+// acting on a partition number afterwards -- mkfs, cryptsetup, a mount, a size
+// query -- silently operates on the old geometry.
+//
+// BLKRRPART fails with EBUSY whenever any partition of the disk is open, and
+// the kernel's own rescan is what creates those partitions -- so a re-read that
+// has just succeeded leaves udev probing the nodes it produced, and a re-read
+// issued moments later hits EBUSY through no fault of the caller. Retrying for
+// a bounded period rides that out. A device still busy at the end of it is
+// genuinely held by something (a leftover mount, a stale device-mapper node),
+// and no caller may treat that as the kernel having adopted the new layout.
+//
+// Whether the caller's fd was opened O_EXCL makes no difference: verified on
+// 6.18 that an exclusive whole-disk fd re-reads fine, and that a single open
+// partition blocks it either way.
+//
+// Pass timeout_sec = 0 for a single attempt, which is also the way to use this
+// as a probe for whether a disk is in use at all.
+//
+// Returns 0 on success, otherwise the errno of the last attempt.
+namespace rpiparted {
+
+int rereadPartitionTable(int fd, int timeout_sec = 5);
+int rereadPartitionTable(const std::string& dev, int timeout_sec = 5);
+
+} // namespace rpiparted
+
 class RPIparted {
 public:
     RPIparted();
@@ -117,19 +148,6 @@ public:
      */
     bool commitAndReread(int timeout_sec = 5);
 
-    /**
-     * @brief Instruct the kernel to re-read the partition table on the device
-     *
-     * In order for this to succeed, there must be no open fds on the device
-     * from before the partition table was changed. Assuming rpiparted was
-     * exclusively used to perform partition table operations, closing and
-     * re-opening the device is essential to ensure the kernel is ready to
-     * re-read the partition table. Closing the device flushes all buffers and
-     * indicates that rpiparted is done with the old state.
-     *
-     * @return True on success. False on failure.
-     */
-    bool rereadPartitionTable();
 private:
     std::unique_ptr<struct fdisk_context, FdiskContextDeleter> context_;
     bool is_gpt_;
