@@ -57,41 +57,6 @@ namespace utils {
    }
 
 
-   bool ReReadPartitionTable(const std::string& dev)
-   {
-      int fd = open(dev.c_str(), O_RDONLY | O_CLOEXEC);
-      if (fd < 0) {
-         std::string msg = dev + ": open failed";
-         perror(msg.c_str());
-         return false;
-      }
-
-      int rc = ioctl(fd, BLKRRPART);
-      if (rc != 0)
-         perror(dev.c_str());
-      close(fd);
-      return (rc == 0) ? true : false;
-   }
-
-
-   bool WaitReReadPartitionTable(const std::string& dev, int timeout_sec)
-   {
-      const int interval_ms = 100;
-      const int max_attempts = timeout_sec * 1000 / interval_ms;
-
-      for (int i = 0; i < max_attempts; ++i) {
-         if (ReReadPartitionTable(dev)) {
-            return true;
-         }
-         if (errno != EBUSY) {
-            perror(dev.c_str());
-            return false; // Some other error, don't retry
-         }
-         std::this_thread::sleep_for(std::chrono::milliseconds(interval_ms));
-      }
-      return false;
-   }
-
 
    bool BlockDevReady(const std::string& dev)
    {
