@@ -619,6 +619,19 @@ bool IDPparser::parseIGv2(const Json::Value& json, const IDPversion& version, st
             err = "Attribute collection failed for partition image: " + partition->image;
             return false;
          }
+
+         // Every partition reaching this point is created with a ptable entry
+         // and will be written to its corresponding block device. An image that
+         // declares itself outside the table cannot be provisioned. Images at a
+         // byte offset need a separate write path (currently unsupported).
+         std::string in_ptable;
+         if (!JCHK(img, "in-partition-table", in_ptable, error) ||
+               in_ptable != "true") {
+            err = "Images requiring provisioning must declare a partition table entry ("
+                  + partition->image + ")";
+            return false;
+         }
+
          if (img.isMember("partition-type"))
                JCHK(img, "partition-type", partition->pcode, error);
          else if (img.isMember("partition-type-uuid"))
