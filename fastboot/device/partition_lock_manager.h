@@ -1,5 +1,5 @@
 /*
- * fastbootd partition-level mutex. Serialises any operation that mutates
+ * fastbootd partition-level lock. Serialises any operation that mutates
  * a partition so flash/erase/veritysetup/verityappend cannot interleave
  * on the same device across USB+TCP connections. [S19]
  *
@@ -11,28 +11,42 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <semaphore>
 #include <string>
 
 namespace rpi {
 
-// Scoped guard — holding this blocks any other caller attempting to
-// Acquire() the same canonical partition path until the guard is
-// destroyed.
+// Scoped guard: holding this blocks any other caller attempting to Acquire()
+// the same canonical partition path until the guard is destroyed. A binary
+// semaphore rather than a mutex, because a deferred flash carries the guard
+// to the worker that writes and it may be released from whichever thread
+// collects the write; a mutex may only be unlocked by its locking thread.
 class PartitionLockGuard {
   public:
     PartitionLockGuard() = default;
-    explicit PartitionLockGuard(std::unique_lock<std::mutex> lock)
-        : lock_(std::move(lock)) {}
+    explicit PartitionLockGuard(std::shared_ptr<std::binary_semaphore> held)
+        : held_(std::move(held)) {}
+    ~PartitionLockGuard() {
+        if (held_) held_->release();
+    }
     PartitionLockGuard(PartitionLockGuard&&) = default;
-    PartitionLockGuard& operator=(PartitionLockGuard&&) = default;
+    PartitionLockGuard& operator=(PartitionLockGuard&& other) {
+        if (this != &other) {
+            if (held_) held_->release();
+            held_ = std::move(other.held_);
+        }
+        return *this;
+    }
+    PartitionLockGuard(const PartitionLockGuard&) = delete;
+    PartitionLockGuard& operator=(const PartitionLockGuard&) = delete;
 
   private:
-    std::unique_lock<std::mutex> lock_;
+    std::shared_ptr<std::binary_semaphore> held_;
 };
 
 // Singleton. Canonicalises `partition_name` via realpath() when possible
 // so a raw /dev/name and a by-slot symlink resolving to the same node
-// share a single mutex.
+// share a single lock.
 class PartitionLockManager {
   public:
     static PartitionLockManager& Instance();
@@ -44,7 +58,7 @@ class PartitionLockManager {
   private:
     PartitionLockManager() = default;
     std::mutex map_mutex_;
-    std::map<std::string, std::shared_ptr<std::mutex>> locks_;
+    std::map<std::string, std::shared_ptr<std::binary_semaphore>> locks_;
 
     // Non-copyable.
     PartitionLockManager(const PartitionLockManager&) = delete;
