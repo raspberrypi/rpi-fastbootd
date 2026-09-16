@@ -8,6 +8,8 @@
 #include <cstdlib>
 #include <cstring>
 
+#include <android-base/logging.h>
+
 namespace rpi {
 
 namespace {
@@ -49,7 +51,14 @@ PartitionLockGuard PartitionLockManager::Acquire(const std::string& partition_na
         }
     }
 
-    std::unique_lock<std::mutex> lock(*mu);
+    std::unique_lock<std::mutex> lock(*mu, std::try_to_lock);
+    if (!lock.owns_lock()) {
+        // Another session holds this partition -- a deferred write that has
+        // not been joined yet, most likely. Say so, or the wait looks like a
+        // hang from the host.
+        LOG(INFO) << "Waiting for another session to release " << key;
+        lock.lock();
+    }
     return PartitionLockGuard(std::move(lock));
 }
 

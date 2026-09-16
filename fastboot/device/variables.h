@@ -43,6 +43,8 @@ bool GetSlotSuccessful(FastbootDevice* device, const std::vector<std::string>& a
                        std::string* message);
 bool GetSlotUnbootable(FastbootDevice* device, const std::vector<std::string>& args,
                        std::string* message);
+bool GetFlashPipeline(FastbootDevice* device, const std::vector<std::string>& args,
+                      std::string* message);
 bool GetMaxDownloadSize(FastbootDevice* device, const std::vector<std::string>& args,
                         std::string* message);
 bool GetUnlocked(FastbootDevice* device, const std::vector<std::string>& args,
