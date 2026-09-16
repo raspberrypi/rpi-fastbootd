@@ -46,12 +46,42 @@ namespace {
 
 constexpr uint32_t SPARSE_HEADER_MAGIC = 0xed26ff3a;
 
+// Granularity of the writes a flash is broken into. O_DIRECT writes must come
+// from a page-aligned buffer, and the download buffer's chunk payloads are not
+// aligned (a sparse chunk header sits in front of each), so every byte is
+// copied through a bounce buffer of this size on its way to the partition.
+constexpr size_t kMaxWriteSize = 1048576;
+
+// The bounce buffer itself. Allocated once per flash and reused, rather than
+// once per call to FlashRawDataChunk: a sparse image runs that function for
+// every chunk in the payload, and a posix_memalign/free pair of kMaxWriteSize
+// per chunk is pure overhead on a path that is already copying every byte.
+class AlignedBuffer {
+  public:
+    bool Alloc(size_t size) {
+        void* p = nullptr;
+        if (posix_memalign(&p, sysconf(_SC_PAGESIZE), size) != 0) {
+            return false;
+        }
+        buf_.reset(p);
+        size_ = size;
+        return true;
+    }
+    char* get() const { return static_cast<char*>(buf_.get()); }
+    size_t size() const { return size_; }
+
+  private:
+    std::unique_ptr<void, decltype(&free)> buf_{nullptr, free};
+    size_t size_ = 0;
+};
+
 // Context passed through the libsparse callback's void* priv, so the
 // callback can report a specific error string back to the caller.
 struct SparseCallbackCtx {
     PartitionHandle* handle;
     uint64_t block_device_size;
     std::string* err;  // may be null
+    AlignedBuffer* bounce;
 };
 
 void SetErr(std::string* err, const std::string& msg) {
@@ -77,24 +107,13 @@ bool IsWholeDisk(const std::string& dev_path) {
 
 }  // namespace
 
-int FlashRawDataChunk(PartitionHandle* handle, const char* data, size_t len, std::string* err) {
+int FlashRawDataChunk(PartitionHandle* handle, AlignedBuffer* bounce, const char* data,
+                      size_t len, std::string* err) {
     size_t ret = 0;
-    const size_t max_write_size = 1048576;
-    void* aligned_buffer;
-    auto pagesize = sysconf(_SC_PAGESIZE);
-
-    if (posix_memalign(&aligned_buffer, pagesize, max_write_size)) {
-        PLOG(ERROR) << "Failed to allocate write buffer";
-        SetErr(err, "posix_memalign of " + std::to_string(max_write_size) +
-                        "B write buffer failed");
-        return -ENOMEM;
-    }
-
-    auto aligned_buffer_unique_ptr = std::unique_ptr<void, decltype(&free)>{aligned_buffer, free};
 
     while (ret < len) {
-        int this_len = std::min(max_write_size, len - ret);
-        memcpy(aligned_buffer_unique_ptr.get(), data, this_len);
+        int this_len = std::min(bounce->size(), len - ret);
+        memcpy(bounce->get(), data, this_len);
         // In case of non page aligned writes, reopen without O_DIRECT flag
         if (this_len & 0xFFF) {
             if (handle->Reset(O_WRONLY) != true) {
@@ -105,11 +124,15 @@ int FlashRawDataChunk(PartitionHandle* handle, const char* data, size_t len, std
             }
         }
 
-        off64_t offset = lseek64(handle->fd(), 0, SEEK_CUR);
-        int this_ret = write(handle->fd(), aligned_buffer_unique_ptr.get(), this_len);
+        int this_ret = write(handle->fd(), bounce->get(), this_len);
         if (this_ret < 0) {
             int saved = errno;
             PLOG(ERROR) << "Failed to flash data of len " << len;
+            // A failed write leaves the file offset untouched, so this reports
+            // where the write was attempted. Asked for only on the error path:
+            // on the happy path it was a syscall per kMaxWriteSize spent
+            // building a string that was then thrown away.
+            off64_t offset = lseek64(handle->fd(), 0, SEEK_CUR);
             SetErr(err, "write(" + std::to_string(this_len) + "B) to " +
                             handle->path() + " at offset " +
                             std::to_string(offset) + " failed: " + strerror(saved));
@@ -124,7 +147,14 @@ int FlashRawDataChunk(PartitionHandle* handle, const char* data, size_t len, std
 
 int FlashRawData(PartitionHandle* handle, const std::vector<char>& downloaded_data,
                  std::string* err) {
-    return FlashRawDataChunk(handle, downloaded_data.data(), downloaded_data.size(), err);
+    AlignedBuffer bounce;
+    if (!bounce.Alloc(kMaxWriteSize)) {
+        PLOG(ERROR) << "Failed to allocate write buffer";
+        SetErr(err, "posix_memalign of " + std::to_string(kMaxWriteSize) +
+                        "B write buffer failed");
+        return -ENOMEM;
+    }
+    return FlashRawDataChunk(handle, &bounce, downloaded_data.data(), downloaded_data.size(), err);
 }
 
 int WriteCallback(void* priv, const void* data, size_t len) {
@@ -146,13 +176,19 @@ int WriteCallback(void* priv, const void* data, size_t len) {
         }
         return 0;
     }
-    return FlashRawDataChunk(handle, reinterpret_cast<const char*>(data), len, ctx->err);
+    return FlashRawDataChunk(handle, ctx->bounce, reinterpret_cast<const char*>(data), len,
+                             ctx->err);
 }
 
 int FlashSparseData(PartitionHandle* handle, std::vector<char>& downloaded_data,
                     uint64_t block_device_size, std::string* err) {
-    struct sparse_file* file = sparse_file_import_buf(downloaded_data.data(),
-                                                      downloaded_data.size(), true, false);
+    // sparse_file_import_buf hands back an owning cookie holding the chunk list
+    // for the whole payload. Every return below used to drop it on the floor,
+    // leaking once per flash command -- which for a multi-chunk image is once
+    // per 256 MiB of OS image, for the lifetime of the daemon.
+    std::unique_ptr<struct sparse_file, decltype(&sparse_file_destroy)> file{
+            sparse_file_import_buf(downloaded_data.data(), downloaded_data.size(), true, false),
+            sparse_file_destroy};
     if (!file) {
         LOG(ERROR) << "Unable to open sparse data for flashing";
         SetErr(err, "not a valid sparse image (sparse_file_import_buf failed on " +
@@ -160,7 +196,7 @@ int FlashSparseData(PartitionHandle* handle, std::vector<char>& downloaded_data,
         return -EINVAL;
     }
 
-    int64_t expanded = sparse_file_len(file, false, false);
+    int64_t expanded = sparse_file_len(file.get(), false, false);
     if (expanded > 0 && static_cast<uint64_t>(expanded) > block_device_size) {
         SetErr(err, "sparse image expands to " + std::to_string(expanded) +
                         "B but partition " + handle->path() + " is only " +
@@ -168,8 +204,16 @@ int FlashSparseData(PartitionHandle* handle, std::vector<char>& downloaded_data,
         return -EFBIG;
     }
 
-    SparseCallbackCtx ctx{handle, block_device_size, err};
-    return sparse_file_callback(file, false, false, WriteCallback, &ctx);
+    AlignedBuffer bounce;
+    if (!bounce.Alloc(kMaxWriteSize)) {
+        PLOG(ERROR) << "Failed to allocate write buffer";
+        SetErr(err, "posix_memalign of " + std::to_string(kMaxWriteSize) +
+                        "B write buffer failed");
+        return -ENOMEM;
+    }
+
+    SparseCallbackCtx ctx{handle, block_device_size, err, &bounce};
+    return sparse_file_callback(file.get(), false, false, WriteCallback, &ctx);
 }
 
 int FlashBlockDevice(PartitionHandle* handle, std::vector<char>& downloaded_data,
