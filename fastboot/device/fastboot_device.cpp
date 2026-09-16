@@ -59,6 +59,7 @@ std::unordered_map<std::string, CommandHandler> FastbootDevice::BuildDataPlaneCo
               {FB_CMD_DOWNLOAD, DownloadHandler},
               {FB_CMD_FLASH, FlashHandler},
               {FB_CMD_GETVAR, GetVarHandlerDataPlane},
+              {FB_CMD_OEM, OemCmdHandlerDataPlane},
     };
 }
 
@@ -211,6 +212,21 @@ void FastbootDevice::ExecuteCommands() {
         if (found_command == kCommandMap.end()) {
             WriteStatus(FastbootResult::FAIL, "Unrecognized command " + args[0]);
             continue;
+        }
+
+        // A deferred flash write is collected before anything that is not
+        // another chunk of the same stream. This is the barrier that makes
+        // lazy-blocking safe: it is where a write that failed after its
+        // flash: already answered OKAY gets reported, and where `oem idpdone`,
+        // `reboot` and the rest are made to wait for the bytes to be on the
+        // disk rather than merely accepted. Costs nothing when the pipeline is
+        // off or idle, which is every session that never opted in.
+        if (cmd_name != FB_CMD_DOWNLOAD && cmd_name != "stage" && cmd_name != FB_CMD_FLASH) {
+            std::string pipeline_err;
+            if (flash_pipeline_.Join(&pipeline_err) != 0) {
+                WriteStatus(FastbootResult::FAIL, pipeline_err);
+                continue;
+            }
         }
         // Backstop: nothing between here and main() catches, so an exception
         // out of a handler would terminate fastbootd. Losing the daemon

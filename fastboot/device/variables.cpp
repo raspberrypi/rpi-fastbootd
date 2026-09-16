@@ -1753,6 +1753,12 @@ bool GetSlotUnbootable(FastbootDevice* device, const std::vector<std::string>& a
     return true;
 }
 
+bool GetFlashPipeline(FastbootDevice* device, const std::vector<std::string>& /* args */,
+                      std::string* message) {
+    *message = device->flash_pipeline().enabled() ? "enabled" : "supported";
+    return true;
+}
+
 bool GetMaxDownloadSize(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
                         std::string* message) {
     *message = android::base::StringPrintf("0x%X", kMaxDownloadSizeDefault);

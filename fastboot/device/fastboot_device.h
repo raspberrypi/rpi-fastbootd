@@ -23,6 +23,7 @@
 #include <vector>
 
 #include "commands.h"
+#include "flash_pipeline.h"
 #include "transport.h"
 #include "variables.h"
 
@@ -52,6 +53,7 @@ class FastbootDevice {
     bool WriteInfo(const std::string& message);
 
     std::vector<char>& download_data() { return download_data_; }
+    FlashPipeline& flash_pipeline() { return flash_pipeline_; }
     Transport* get_transport() { return transport_.get(); }
 
     void set_active_slot(const std::string& active_slot) { active_slot_ = active_slot; }
@@ -67,5 +69,8 @@ class FastbootDevice {
 
     std::unique_ptr<Transport> transport_;
     std::vector<char> download_data_;
+    // Its destructor drains an in-flight write. The worker owns everything
+    // that write touches, so member order is not load-bearing here.
+    FlashPipeline flash_pipeline_;
     std::string active_slot_;
 };

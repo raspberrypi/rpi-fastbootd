@@ -12,6 +12,7 @@ set(SOURCES
     device/main.cpp
     device/partition_lock_manager.cpp
     device/usb.cpp
+    device/flash_pipeline.cpp
     device/usb_iouring.cpp
     device/usb_client.cpp
     device/tcp_client.cpp

@@ -145,3 +145,11 @@
 //   "read-failed:<rc>" — could not read the key slot status at startup.
 #define FB_VAR_OTP_LOCK_STATUS "otp-lock-status"
 
+// Capability probe for deferred ("lazy-blocking") flash writes: the device
+// answers flash: for a chunk while that chunk is still going to disk, so the
+// host can start sending the next one. Values: "enabled" once a client has
+// turned it on with `oem flash-pipeline on`, "supported" otherwise. The
+// variable simply existing is the capability signal -- a build without the
+// feature answers FAIL "Unknown variable", which is what an older client that
+// never asks would have got anyway.
+#define FB_VAR_FLASH_PIPELINE "rpi-flash-pipeline"

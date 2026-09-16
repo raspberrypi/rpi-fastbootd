@@ -165,6 +165,7 @@ const std::unordered_map<std::string, VariableHandlers> kVariableMap = {
         {FB_VAR_SECURE, {GetSecure, nullptr}},
         // {FB_VAR_UNLOCKED, {GetUnlocked, nullptr}},
         {FB_VAR_MAX_DOWNLOAD_SIZE, {GetMaxDownloadSize, nullptr}},
+        {FB_VAR_FLASH_PIPELINE, {GetFlashPipeline, nullptr}},
         // {FB_VAR_CURRENT_SLOT, {::GetCurrentSlot, nullptr}},
         // {FB_VAR_SLOT_COUNT, {GetSlotCount, nullptr}},
         // {FB_VAR_HAS_SLOT, {GetHasSlot, GetAllPartitionArgsNoSlot}},
@@ -349,11 +350,11 @@ bool GetVarHandlerDataPlane(FastbootDevice* device, const std::vector<std::strin
     // queries `max-download-size` to decide its sparse-chunk limit. Without
     // an answer to the latter the client falls back to "unlimited" and ships
     // the whole partition in one download, which DownloadHandler rejects via
-    // ParseUint against kMaxDownloadSizeDefault — surfacing on the serial
-    // console as "Couldn't read command: Numerical result out of range"
-    // (ParseUint sets errno=ERANGE on overflow, and the next Read sees a
-    // closed socket without clearing it). Anything beyond these two is still
-    // refused so control-plane queries can't slip through.
+    // ParseUint against kMaxDownloadSizeDefault, surfacing on the serial
+    // console as "Couldn't read command: Numerical result out of range".
+    // The pipeline probe is the third: a data-plane client has to be able to
+    // ask before it opts in. Anything beyond these is still refused so
+    // control-plane queries can't slip through.
     if (args.size() < 2) {
         return device->WriteFail("data-plane connection: getvar requires a variable name");
     }
@@ -368,6 +369,12 @@ bool GetVarHandlerDataPlane(FastbootDevice* device, const std::vector<std::strin
     if (name == FB_VAR_MAX_DOWNLOAD_SIZE) {
         if (!GetMaxDownloadSize(device, {}, &message)) {
             return device->WriteFail("internal: GetMaxDownloadSize failed");
+        }
+        return device->WriteOkay(message);
+    }
+    if (name == FB_VAR_FLASH_PIPELINE) {
+        if (!GetFlashPipeline(device, {}, &message)) {
+            return device->WriteFail("internal: GetFlashPipeline failed");
         }
         return device->WriteOkay(message);
     }
@@ -599,6 +606,8 @@ namespace {
 
     // oem idpdone
     static bool oem_cmd_idp_done(FastbootDevice* device, const std::vector<std::string>& unused) {
+       // Finalising writes to a disk a TCP session may still be flashing.
+       FlashPipeline::WaitAllIdle();
        if (!device->idp) {
           return device->WriteOkay("IDP:not initialised");
        }
@@ -1897,6 +1906,42 @@ ssize_t bulk_write(int bulk_in, const char *buf, size_t length)
     }
 } //namespace anonymous
 
+// oem flash-pipeline on|off -- opt into (or out of) deferred flash writes.
+// Off by default: a client that never sends this sees the behaviour it always
+// saw, which is the whole point of making it opt-in.
+static bool oem_cmd_flash_pipeline(FastbootDevice* device, const std::vector<std::string>& args) {
+    if (args.size() < 3) {
+        return device->WriteFail("Wanted oem flash-pipeline <on|off>");
+    }
+    const std::string& mode = args[2];
+    if (mode == "on") {
+        std::string err;
+        if (!device->flash_pipeline().Enable(kMaxDownloadSizeDefault,
+                                             device->download_data().capacity(), &err)) {
+            return device->WriteFail("flash-pipeline: " + err);
+        }
+        return device->WriteOkay("deferred flash writes enabled");
+    }
+    if (mode == "off") {
+        std::string err;
+        if (device->flash_pipeline().Disable(&err) != 0) {
+            return device->WriteFail("flash-pipeline: " + err);
+        }
+        return device->WriteOkay("deferred flash writes disabled");
+    }
+    return device->WriteFail("Wanted oem flash-pipeline <on|off>");
+}
+
+// oem flash-commit -- block until every deferred write has landed and report
+// the result. The dispatcher already joins before any command that is not
+// download:/flash:, so this exists for the client that has nothing else to say
+// after its last chunk and would otherwise disconnect without ever asking.
+static bool oem_cmd_flash_commit(FastbootDevice* device, const std::vector<std::string>&) {
+    // The join has already happened in ExecuteCommands by the time this runs;
+    // reaching here at all means it came back clean.
+    return device->WriteOkay("deferred flash writes committed");
+}
+
 bool OemCmdHandler(FastbootDevice* device, const std::vector<std::string>& args) {
 
     std::string message = {};
@@ -1957,9 +2002,32 @@ bool OemCmdHandler(FastbootDevice* device, const std::vector<std::string>& args)
         return oem_cmd_eeprom_verify(device, split_args);
     } else if (command_name == "eeprom-read") {
         return oem_cmd_eeprom_read(device, split_args);
+    } else if (command_name == "flash-pipeline") {
+        return oem_cmd_flash_pipeline(device, split_args);
+    } else if (command_name == "flash-commit") {
+        return oem_cmd_flash_commit(device, split_args);
     }
 
     return device->WriteFail("Unknown OEM command.");
+}
+
+// The data plane carries the bulk flash in `-i usb+tcp` mode, which is exactly
+// where deferring writes is worth the most -- but it must not become a way to
+// reach the control plane's OEM surface. Only the two pipeline verbs are
+// answered here; everything else is refused as it was before.
+bool OemCmdHandlerDataPlane(FastbootDevice* device, const std::vector<std::string>& args) {
+    std::vector<std::string> split_args = android::base::Split(args[0], " ");
+    if (split_args.size() < 2) {
+        return device->WriteFail("data-plane connection: malformed oem command");
+    }
+    const std::string& command_name = split_args[1];
+    if (command_name == "flash-pipeline") {
+        return oem_cmd_flash_pipeline(device, split_args);
+    }
+    if (command_name == "flash-commit") {
+        return oem_cmd_flash_commit(device, split_args);
+    }
+    return device->WriteFail("data-plane connection: oem " + command_name + " not permitted");
 }
 
 bool DownloadHandler(FastbootDevice* device, const std::vector<std::string>& args) {
@@ -2083,6 +2151,7 @@ bool SetActiveHandler(FastbootDevice* device, const std::vector<std::string>& ar
 }
 
 bool ShutDownHandler(FastbootDevice* device, const std::vector<std::string>& /* args */) {
+    FlashPipeline::WaitAllIdle();  // see RebootHandler
     auto result = device->WriteStatus(FastbootResult::OKAY, "Shutting down");
     // android::base::SetProperty(ANDROID_RB_PROPERTY, "shutdown,fastboot");
     device->CloseDevice();
@@ -2113,6 +2182,10 @@ static bool TriggerSystemdReboot(const char* arg) {
 }
 
 bool RebootHandler(FastbootDevice* device, const std::vector<std::string>& /* args */) {
+    // Another session's deferred write may still be going to disk -- in
+    // usb+tcp mode the TCP worker that took the flash is not this session.
+    // systemctl will SIGTERM this process, so wait for the bytes first.
+    FlashPipeline::WaitAllIdle();
     auto result = device->WriteStatus(FastbootResult::OKAY, "Rebooting");
     device->CloseDevice();
     if (!TriggerSystemdReboot(nullptr)) {
@@ -2123,6 +2196,7 @@ bool RebootHandler(FastbootDevice* device, const std::vector<std::string>& /* ar
 }
 
 bool RebootBootloaderHandler(FastbootDevice* device, const std::vector<std::string>& /* args */) {
+    FlashPipeline::WaitAllIdle();  // see RebootHandler
     auto result = device->WriteStatus(FastbootResult::OKAY, "Rebooting bootloader");
     device->CloseDevice();
     if (!TriggerSystemdReboot("bootloader")) {

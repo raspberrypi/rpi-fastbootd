@@ -49,4 +49,5 @@ bool EraseHandler(FastbootDevice* device, const std::vector<std::string>& args);
 bool FlashHandler(FastbootDevice* device, const std::vector<std::string>& args);
 bool UploadHandler(FastbootDevice* device, const std::vector<std::string>& args);
 bool OemCmdHandler(FastbootDevice* device, const std::vector<std::string>& args);
+bool OemCmdHandlerDataPlane(FastbootDevice* device, const std::vector<std::string>& args);
 bool FetchHandler(FastbootDevice* device, const std::vector<std::string>& args);

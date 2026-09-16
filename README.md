@@ -122,6 +122,22 @@ This fastbootd adds the following OEM commands beyond standard AOSP:
 
 **See:** IDP documentation in the fastboot directory for JSON schema details
 
+### Deferred Flash Writes
+
+Opt-in pipelining. Once enabled, `flash` answers OKAY while the chunk is still
+being written, so the host starts sending the next chunk straight away. A write
+that then fails is reported as a FAIL on the next command the session sends.
+
+| Command | Description | Example |
+|---------|-------------|---------|
+| `getvar rpi-flash-pipeline` | Probe support: `supported` or `enabled`; FAIL on builds without it | `fastboot getvar rpi-flash-pipeline` |
+| `oem flash-pipeline on\|off` | Turn deferred writes on or off for this session | `fastboot oem flash-pipeline on` |
+| `oem flash-commit` | Wait for the last deferred write and report its result | `fastboot oem flash-commit` |
+
+The setting is per session. A USB session spans every `fastboot` invocation
+until the cable or board goes away; a TCP connection lasts one invocation.
+`reboot`, shutdown and `oem idpdone` wait for every session's writes to land.
+
 ### LUKS Encryption
 
 | Command | Description | Example |
