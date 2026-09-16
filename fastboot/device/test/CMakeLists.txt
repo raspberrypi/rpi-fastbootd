@@ -153,6 +153,27 @@ target_include_directories(eeprom_test PRIVATE
 add_test(NAME eeprom_all_tests COMMAND eeprom_test)
 add_test(NAME eeprom_parsing COMMAND eeprom_test "[eeprom]")
 
+# Deferred flash write bookkeeping. No hardware: the write itself is injected.
+add_executable(flash_pipeline_test flash_pipeline_test.cpp ../flash_pipeline.cpp)
+
+target_link_directories(flash_pipeline_test PRIVATE "/usr/lib/aarch64-linux-gnu/android")
+target_link_libraries(flash_pipeline_test PRIVATE
+    Catch2::Catch2WithMain
+    base
+    log
+)
+
+set_property(TARGET flash_pipeline_test PROPERTY CXX_STANDARD 23)
+set_property(TARGET flash_pipeline_test PROPERTY CXX_STANDARD_REQUIRED ON)
+
+target_include_directories(flash_pipeline_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/..
+    /usr/include/android
+)
+
+add_test(NAME flash_pipeline_all_tests COMMAND flash_pipeline_test)
+add_test(NAME flash_pipeline_memory COMMAND flash_pipeline_test "[memory]")
+
 # Link the pre-built utility.cpp.o from the fastbootd target to avoid
 # re-compiling utility.cpp (which drags in the full transport stack).
 set(UTILITY_OBJ $<TARGET_OBJECTS:fastbootd>)
@@ -232,7 +253,7 @@ add_test(NAME fwcrypto_hmac COMMAND fwcrypto_test "[hmac]")
 add_test(NAME fwcrypto_pubkey COMMAND fwcrypto_test "[pubkey]")
 
 # Installation (optional)
-install(TARGETS kernel_log_test gpio_test gateway_test crypto_test idp_crypto_test verity_test fwcrypto_test eeprom_test
+install(TARGETS kernel_log_test gpio_test gateway_test crypto_test idp_crypto_test verity_test fwcrypto_test eeprom_test flash_pipeline_test
         RUNTIME DESTINATION tests
 )
 
@@ -244,6 +265,7 @@ message(STATUS "  - gateway_test: /proc gateway parsing")
 message(STATUS "  - crypto_test: libcryptsetup LUKS operations")
 message(STATUS "  - verity_test: dm-verity hash tree generation")
 message(STATUS "  - eeprom_test: EEPROM image parsing and min-boot-version checks")
+message(STATUS "  - flash_pipeline_test: deferred flash write bookkeeping")
 message(STATUS "  - Run tests with: ctest --test-dir build/fastboot/device/test")
 message(STATUS "  - Or directly: build/fastboot/device/test/<test_name>")
 message(STATUS "  - For verbose output: <test> -s")
