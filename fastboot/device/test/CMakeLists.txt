@@ -160,6 +160,22 @@ target_include_directories(eeprom_test PRIVATE
 add_test(NAME eeprom_all_tests COMMAND eeprom_test)
 add_test(NAME eeprom_parsing COMMAND eeprom_test "[eeprom]")
 
+# Customer OTP / MAC address helpers. otp.cpp deliberately depends on nothing
+# beyond libc, so the test links without the transport stack behind it.
+add_executable(otp_test otp_test.cpp ../otp.cpp)
+
+target_link_libraries(otp_test PRIVATE Catch2::Catch2WithMain)
+
+target_compile_features(otp_test PRIVATE cxx_std_17)
+
+target_include_directories(otp_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/..
+)
+
+add_test(NAME otp_all_tests COMMAND otp_test)
+add_test(NAME otp_mac COMMAND otp_test "[mac]")
+add_test(NAME otp_rows COMMAND otp_test "[rows]")
+
 # Link the pre-built utility.cpp.o from the fastbootd target to avoid
 # re-compiling utility.cpp (which drags in the full transport stack).
 set(UTILITY_OBJ $<TARGET_OBJECTS:fastbootd>)
@@ -252,6 +268,7 @@ message(STATUS "  - gateway_test: /proc gateway parsing")
 message(STATUS "  - crypto_test: libcryptsetup LUKS operations")
 message(STATUS "  - verity_test: dm-verity hash tree generation")
 message(STATUS "  - eeprom_test: EEPROM image parsing and min-boot-version checks")
+message(STATUS "  - otp_test: customer OTP row and MAC address helpers")
 message(STATUS "  - Run tests with: ctest --test-dir build/fastboot/device/test")
 message(STATUS "  - Or directly: build/fastboot/device/test/<test_name>")
 message(STATUS "  - For verbose output: <test> -s")
