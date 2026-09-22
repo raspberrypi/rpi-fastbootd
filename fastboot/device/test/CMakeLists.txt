@@ -272,6 +272,6 @@ message(STATUS "      - gpio_test needs GPIO hardware access")
 message(STATUS "      - gateway_test needs network configuration")
 message(STATUS "      - crypto_test needs root for loopback devices")
 message(STATUS "      - verity_test needs root for loopback devices")
-message(STATUS "      - fwcrypto_test needs /dev/vcio (firmware mailbox)")
+message(STATUS "      - fwcrypto_test needs /dev/vcio_crypto or /dev/vcio (firmware mailbox)")
 message(STATUS "      Run as root for full test coverage: sudo ctest")
 
