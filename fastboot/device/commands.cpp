@@ -54,6 +54,7 @@
 
 #include "constants.h"
 #include "eeprom.h"
+#include "otp.h"
 #include "fastboot_device.h"
 #include "flashing.h"
 #include "utility.h"
@@ -202,6 +203,9 @@ const std::unordered_map<std::string, VariableHandlers> kVariableMap = {
         {FB_VAR_MAC_ETHERNET, {GetMacEthernet, nullptr}},
         {FB_VAR_MAC_WIFI, {GetMacWifi, nullptr}},
         {FB_VAR_MAC_BT, {GetMacBt, nullptr}},
+        {FB_VAR_CUSTOMER_MAC_ETHERNET, {GetCustomerMacEthernet, nullptr}},
+        {FB_VAR_CUSTOMER_MAC_WIFI, {GetCustomerMacWifi, nullptr}},
+        {FB_VAR_CUSTOMER_MAC_BT, {GetCustomerMacBt, nullptr}},
         {FB_VAR_RPI_DUID, {GetRpiDuid, nullptr}},
         {FB_VAR_SIGNED_EEPROM, {GetSignedEeprom, nullptr}},
         {FB_VAR_SIGNED_OTP, {GetSignedOtp, nullptr}},
