@@ -1900,6 +1900,157 @@ ssize_t bulk_write(int bulk_in, const char *buf, size_t length)
         return device->WriteOkay("eeprom-read: " + std::to_string(image.size()) +
                                  " bytes staged for upload");
     }
+
+    #define MAC_USAGE                                              \
+        "Usage:\r\n"                                               \
+        "\toem mac get <ethernet|wifi|bluetooth>\r\n"               \
+        "\toem mac check <aa:bb:cc:dd:ee:ff>\r\n"                   \
+        "\toem mac set <ethernet|wifi|bluetooth> <aa:bb:cc:dd:ee:ff>"
+
+    // oem mac <get|check|set>
+    //
+    // The addresses the bootloader prefers over the Raspberry Pi-programmed
+    // rows. They are read at reset, so a device programmed here keeps the
+    // address it booted with until it is power-cycled.
+    static bool oem_cmd_mac(FastbootDevice* device, const std::vector<std::string>& args) {
+        if (args.size() < 4) {
+            return device->WriteFail("Insufficient arguments. " MAC_USAGE);
+        }
+        const std::string& subcommand = args[2];
+
+        if (subcommand == "get") {
+            rpi::otp::MacInterface iface = rpi::otp::MacInterface::Ethernet;
+            if (!rpi::otp::ParseMacInterface(args[3], &iface)) {
+                return device->WriteFail("mac get: unknown interface '" + args[3] + "'. " MAC_USAGE);
+            }
+            rpi::otp::Mac mac{};
+            rpi::otp::Result result = rpi::otp::GetCustomerMac(iface, &mac);
+            if (!result.ok) {
+                return device->WriteFail("mac get: " + result.err);
+            }
+            if (rpi::otp::MacIsBlank(mac)) {
+                return device->WriteOkay("mac get: not programmed");
+            }
+            if (rpi::otp::MacIsIgnored(mac)) {
+                return device->WriteOkay("mac get: ff:ff:ff:ff:ff:ff, ignored by the bootloader");
+            }
+            return device->WriteOkay("mac get: " + rpi::otp::FormatMac(mac));
+        }
+
+        if (subcommand == "check") {
+            rpi::otp::Mac mac{};
+            rpi::otp::Result parsed = rpi::otp::ParseMac(args[3], &mac);
+            if (!parsed.ok) {
+                return device->WriteFail("mac check: " + parsed.err);
+            }
+            rpi::otp::Result valid = rpi::otp::ValidateMac(mac);
+            if (!valid.ok) {
+                return device->WriteFail("mac check: " + valid.err);
+            }
+            uint32_t words[2] = {0, 0};
+            rpi::otp::MacToWords(mac, words);
+            return device->WriteOkay(android::base::StringPrintf(
+                    "mac check: %s is a writable address (words 0x%08x 0x%08x)",
+                    rpi::otp::FormatMac(mac).c_str(), words[0], words[1]));
+        }
+
+        if (subcommand == "set") {
+            if (args.size() < 5) {
+                return device->WriteFail("Insufficient arguments. " MAC_USAGE);
+            }
+            rpi::otp::MacInterface iface = rpi::otp::MacInterface::Ethernet;
+            if (!rpi::otp::ParseMacInterface(args[3], &iface)) {
+                return device->WriteFail("mac set: unknown interface '" + args[3] + "'. " MAC_USAGE);
+            }
+            rpi::otp::Mac mac{};
+            rpi::otp::Result parsed = rpi::otp::ParseMac(args[4], &mac);
+            if (!parsed.ok) {
+                return device->WriteFail("mac set: " + parsed.err);
+            }
+            rpi::otp::WriteOutcome outcome = rpi::otp::WriteOutcome::Programmed;
+            rpi::otp::Result result = rpi::otp::SetCustomerMac(iface, mac, &outcome);
+            if (!result.ok) {
+                LOG(ERROR) << "oem mac set: " << result.err;
+                return device->WriteFail("mac set: " + result.err);
+            }
+            const std::string subject =
+                    "mac set: customer " + std::string(rpi::otp::MacInterfaceName(iface)) +
+                    " MAC " + rpi::otp::FormatMac(mac);
+            if (outcome == rpi::otp::WriteOutcome::AlreadyMatches) {
+                LOG(INFO) << subject << " was already programmed";
+                return device->WriteOkay(subject + " was already programmed");
+            }
+            LOG(INFO) << subject << " programmed";
+            return device->WriteOkay(subject + " programmed, effective after reset");
+        }
+
+        return device->WriteFail("mac: unknown subcommand '" + subcommand + "'. " MAC_USAGE);
+    }
+
+    #define OTP_USAGE                                              \
+        "Usage:\r\n"                                               \
+        "\toem otp get <row> [count]\r\n"                          \
+        "\toem otp set <row> <word> [word...]\r\n"                 \
+        "Rows are indices into the eight-row customer region, not absolute OTP rows."
+
+    // oem otp <get|set>
+    static bool oem_cmd_otp(FastbootDevice* device, const std::vector<std::string>& args) {
+        if (args.size() < 4) {
+            return device->WriteFail("Insufficient arguments. " OTP_USAGE);
+        }
+        const std::string& subcommand = args[2];
+        if (subcommand != "get" && subcommand != "set") {
+            return device->WriteFail("otp: unknown subcommand '" + subcommand + "'. " OTP_USAGE);
+        }
+
+        uint32_t start = 0;
+        if (!android::base::ParseUint(args[3], &start)) {
+            return device->WriteFail("otp: '" + args[3] + "' is not a row number. " OTP_USAGE);
+        }
+
+        if (subcommand == "get") {
+            uint32_t count = 1;
+            if (args.size() >= 5 && !android::base::ParseUint(args[4], &count)) {
+                return device->WriteFail("otp get: '" + args[4] + "' is not a count. " OTP_USAGE);
+            }
+            std::vector<uint32_t> rows;
+            rpi::otp::Result result = rpi::otp::ReadCustomerOtp(start, count, &rows);
+            if (!result.ok) {
+                return device->WriteFail("otp get: " + result.err);
+            }
+            std::string values;
+            for (size_t i = 0; i < rows.size(); i++) {
+                values += android::base::StringPrintf("%s0x%08x", i ? " " : "", rows[i]);
+            }
+            return device->WriteOkay("otp get: " + values);
+        }
+
+        if (args.size() < 5) {
+            return device->WriteFail("Insufficient arguments. " OTP_USAGE);
+        }
+        std::vector<uint32_t> values;
+        for (size_t i = 4; i < args.size(); i++) {
+            uint32_t word = 0;
+            if (!android::base::ParseUint(args[i], &word)) {
+                return device->WriteFail("otp set: '" + args[i] +
+                                         "' is not a 32-bit value. " OTP_USAGE);
+            }
+            values.push_back(word);
+        }
+        rpi::otp::WriteOutcome outcome = rpi::otp::WriteOutcome::Programmed;
+        rpi::otp::Result result = rpi::otp::WriteCustomerOtp(start, values, &outcome);
+        if (!result.ok) {
+            LOG(ERROR) << "oem otp set: " << result.err;
+            return device->WriteFail("otp set: " + result.err);
+        }
+        const char* verb = outcome == rpi::otp::WriteOutcome::AlreadyMatches
+                                   ? " already held the requested value"
+                                   : " programmed";
+        const size_t last_row = start + values.size() - 1;
+        LOG(INFO) << "oem otp set: customer rows " << start << "-" << last_row << verb;
+        return device->WriteOkay(android::base::StringPrintf("otp set: customer rows %u-%zu%s",
+                                                             start, last_row, verb));
+    }
 } //namespace anonymous
 
 bool OemCmdHandler(FastbootDevice* device, const std::vector<std::string>& args) {
@@ -1962,6 +2113,10 @@ bool OemCmdHandler(FastbootDevice* device, const std::vector<std::string>& args)
         return oem_cmd_eeprom_verify(device, split_args);
     } else if (command_name == "eeprom-read") {
         return oem_cmd_eeprom_read(device, split_args);
+    } else if (command_name == "mac") {
+        return oem_cmd_mac(device, split_args);
+    } else if (command_name == "otp") {
+        return oem_cmd_otp(device, split_args);
     }
 
     return device->WriteFail("Unknown OEM command.");
