@@ -7,6 +7,7 @@ set(COMMON_CPPFLAGS
 set(SOURCES
     device/commands.cpp
     device/eeprom.cpp
+    device/otp.cpp
     device/fastboot_device.cpp
     device/flashing.cpp
     device/main.cpp
