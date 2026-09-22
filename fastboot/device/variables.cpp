@@ -17,6 +17,7 @@
 #include "variables.h"
 
 #include "eeprom.h"
+#include "otp.h"
 
 #include <algorithm>
 #include <cstring>
@@ -1192,6 +1193,44 @@ bool GetMacBt(FastbootDevice * /* device */, const std::vector<std::string> & /*
               std::string *message)
 {
     return GetMacPreferringDeviceTree("bluetooth", "local-bd-address", true, "54", "55", message);
+}
+
+namespace {
+    // From the firmware, not the device tree, which does not carry a row
+    // written this boot until the part resets. Unwritten reads as empty, as
+    // GetMacFromOtp does.
+    bool GetCustomerMacFor(rpi::otp::MacInterface iface, std::string* message) {
+        rpi::otp::Mac mac{};
+        rpi::otp::Result result = rpi::otp::GetCustomerMac(iface, &mac);
+        if (!result.ok) {
+            *message = result.err;
+            return false;
+        }
+        if (rpi::otp::MacIsBlank(mac)) {
+            message->clear();
+            return true;
+        }
+        *message = rpi::otp::FormatMac(mac);
+        return true;
+    }
+} // namespace
+
+bool GetCustomerMacEthernet(FastbootDevice * /* device */,
+                            const std::vector<std::string> & /* args */, std::string *message)
+{
+    return GetCustomerMacFor(rpi::otp::MacInterface::Ethernet, message);
+}
+
+bool GetCustomerMacWifi(FastbootDevice * /* device */, const std::vector<std::string> & /* args */,
+                        std::string *message)
+{
+    return GetCustomerMacFor(rpi::otp::MacInterface::Wifi, message);
+}
+
+bool GetCustomerMacBt(FastbootDevice * /* device */, const std::vector<std::string> & /* args */,
+                      std::string *message)
+{
+    return GetCustomerMacFor(rpi::otp::MacInterface::Bluetooth, message);
 }
 
 bool GetMmcCid(FastbootDevice * /* device */, const std::vector<std::string> & /* args */,
