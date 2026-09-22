@@ -107,6 +107,12 @@ bool GetMacWifi(FastbootDevice* /* device */, const std::vector<std::string>& /*
     std::string* message);
 bool GetMacBt(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
     std::string* message);
+bool GetCustomerMacEthernet(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
+    std::string* message);
+bool GetCustomerMacWifi(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
+    std::string* message);
+bool GetCustomerMacBt(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
+    std::string* message);
 bool GetMmcSectorSize(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
     std::string* message);
 bool GetMmcSectorCount(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
