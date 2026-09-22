@@ -94,6 +94,10 @@
 #define FB_VAR_MAC_WIFI "mac-wifi"
 #define FB_VAR_MAC_BT "mac-bt"
 
+#define FB_VAR_CUSTOMER_MAC_ETHERNET "customer-mac-ethernet"
+#define FB_VAR_CUSTOMER_MAC_WIFI "customer-mac-wifi"
+#define FB_VAR_CUSTOMER_MAC_BT "customer-mac-bt"
+
 #define FB_VAR_RPI_DUID "rpi-duid"
 
 #define FB_VAR_MMC_SECTOR_SIZE "mmc-sector-size"

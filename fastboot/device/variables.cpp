@@ -17,6 +17,7 @@
 #include "variables.h"
 
 #include "eeprom.h"
+#include "otp.h"
 
 #include <algorithm>
 #include <cstring>
@@ -231,20 +232,35 @@ namespace {
 } // namespace anonymous
 
 namespace {
-    // Helper to extract bit field from any OTP register
-    bool GetOtpRegisterBitField(const std::string& register_key, uint32_t mask, int shift, 
-                                std::string* message) {
-        bool found = false;
-        inspectOtp([&](std::string *key, std::string *value) {
-            if (*key == register_key) {
-            uint32_t value_int = std::stoul(*value, 0, 16);
-                *message = android::base::StringPrintf("0x%X", (value_int & mask) >> shift);
-                found = true;
+    // The kernel publishes all of OTP through nvmem, so prefer it: no vcgencmd
+    // in the image, no temporary file, no text to parse. Only a part without it
+    // falls through to the dump.
+    bool ReadOtpRow(uint32_t row, uint32_t* value, std::string* error) {
+        std::vector<uint32_t> rows;
+        if (rpi::otp::ReadOtpRows(row, 1, &rows)) {
+            *value = rows[0];
             return true;
         }
-        return false;
-        }, message);
-        return found;
+
+        const std::string key = std::to_string(row);
+        bool matched = false;
+        bool parsed = false;
+        inspectOtp([&](std::string* dumped_key, std::string* dumped_value) {
+            if (*dumped_key != key) {
+                return false;
+            }
+            matched = true;
+            // Bare lowercase hex; sscanf rejects the rest without
+            // std::stoul's throw.
+            parsed = sscanf(dumped_value->c_str(), "%" SCNx32, value) == 1;
+            return true;
+        }, error);
+
+        if (!parsed && error->empty()) {
+            *error = matched ? "otp_dump reported row " + key + " as a non-hex value"
+                             : "otp_dump did not report row " + key;
+        }
+        return parsed;
     }
 
     // The board revision code, whose bit fields name the model, SoC, memory
@@ -273,13 +289,10 @@ namespace {
         // Row 32 first: a BCM2712 part is the one most likely to be missing
         // the node, since it is also the family whose OTP layout this daemon
         // was originally written against.
-        for (const char* row : {"32", "30"}) {
-            std::string value;
-            if (!GetOtpRegisterBitField(row, 0xFFFFFFFF, 0, &value)) {
-                continue;
-            }
+        for (uint32_t row : {32u, 30u}) {
             uint32_t candidate = 0;
-            if (sscanf(value.c_str(), "0x%" SCNx32, &candidate) != 1) {
+            std::string row_error;
+            if (!ReadOtpRow(row, &candidate, &row_error)) {
                 continue;
             }
             if (candidate & (1u << 23)) {
@@ -389,38 +402,22 @@ namespace {
     // case -- pre-production silicon, and any SKU without the radio at all for
     // mac-wifi/mac-bt -- and a zero MAC reads downstream as a measurement
     // rather than as the absence of one.
-    bool GetMacFromOtp(const std::string& low_key, const std::string& high_key, std::string* message) {
-        std::string mac_lo, mac_hi, otp_error;
-        uint required = 2;
-        inspectOtp([&](std::string *key, std::string *value) {
-            if (*key == low_key) {
-                mac_lo = value->substr(0, 4);
-                required--;
-            } else if (*key == high_key) {
-                mac_hi = *value;
-                required--;
-            }
-            return !required;  // Return true when both found
-        }, &otp_error);
-
-        // inspectOtp writes to its message only when the dump itself failed, so
-        // a missing row leaves it empty. Either way this is a failed read, not
-        // a device without a MAC, and must not be answered with a MAC-shaped
-        // string.
-        if (required) {
-            *message = otp_error.empty()
-                    ? "otp_dump did not report rows " + low_key + "/" + high_key
-                    : otp_error;
+    bool GetMacFromOtp(uint32_t low_row, uint32_t high_row, std::string* message) {
+        // A failed read must not be answered with a MAC-shaped string;
+        // ReadOtpRow leaves the reason in the message.
+        uint32_t low = 0, high = 0;
+        if (!ReadOtpRow(low_row, &low, message) || !ReadOtpRow(high_row, &high, message)) {
             return false;
         }
 
-        if (mac_hi.find_first_not_of('0') == std::string::npos &&
-            mac_lo.find_first_not_of('0') == std::string::npos) {
+        // High row, plus the top half of the low row.
+        if (high == 0 && (low >> 16) == 0) {
             message->clear();
             return true;
         }
 
-        *message = FormatMacPart(mac_hi) + ":" + FormatMacPart(mac_lo);
+        *message = FormatMacPart(android::base::StringPrintf("%08x", high)) + ":" +
+                   FormatMacPart(android::base::StringPrintf("%04x", low >> 16));
         return true;
     }
 
@@ -1162,15 +1159,15 @@ namespace {
 // matters; anything else is reported as a failed read rather than a guess.
 namespace {
     bool GetMacPreferringDeviceTree(const char* alias_name, const char* property, bool lsb_first,
-                                    const char* otp_low, const char* otp_high,
+                                    uint32_t otp_low, uint32_t otp_high,
                                     std::string* message) {
         if (GetMacFromDeviceTree(alias_name, property, lsb_first, message)) {
             return true;
         }
         if (!IsBcm2712()) {
             *message = std::string("no ") + property + " in device tree alias " + alias_name +
-                       ", and OTP rows " + otp_low + "/" + otp_high +
-                       " are not MAC addresses on this SoC";
+                       ", and OTP rows " + std::to_string(otp_low) + "/" +
+                       std::to_string(otp_high) + " are not MAC addresses on this SoC";
             return false;
         }
         return GetMacFromOtp(otp_low, otp_high, message);
@@ -1179,19 +1176,57 @@ namespace {
 
 bool GetMacEthernet(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
                     std::string* message) {
-    return GetMacPreferringDeviceTree("ethernet0", "local-mac-address", false, "50", "51", message);
+    return GetMacPreferringDeviceTree("ethernet0", "local-mac-address", false, 50, 51, message);
 }
 
 bool GetMacWifi(FastbootDevice * /* device */, const std::vector<std::string> & /* args */,
                 std::string *message)
 {
-    return GetMacPreferringDeviceTree("wifi0", "local-mac-address", false, "52", "53", message);
+    return GetMacPreferringDeviceTree("wifi0", "local-mac-address", false, 52, 53, message);
 }
 
 bool GetMacBt(FastbootDevice * /* device */, const std::vector<std::string> & /* args */,
               std::string *message)
 {
-    return GetMacPreferringDeviceTree("bluetooth", "local-bd-address", true, "54", "55", message);
+    return GetMacPreferringDeviceTree("bluetooth", "local-bd-address", true, 54, 55, message);
+}
+
+namespace {
+    // From the firmware, not the device tree, which does not carry a row
+    // written this boot until the part resets. Unwritten reads as empty, as
+    // GetMacFromOtp does.
+    bool GetCustomerMacFor(rpi::otp::MacInterface iface, std::string* message) {
+        rpi::otp::Mac mac{};
+        rpi::otp::Result result = rpi::otp::GetCustomerMac(iface, &mac);
+        if (!result.ok) {
+            *message = result.err;
+            return false;
+        }
+        if (rpi::otp::MacIsBlank(mac)) {
+            message->clear();
+            return true;
+        }
+        *message = rpi::otp::FormatMac(mac);
+        return true;
+    }
+} // namespace
+
+bool GetCustomerMacEthernet(FastbootDevice * /* device */,
+                            const std::vector<std::string> & /* args */, std::string *message)
+{
+    return GetCustomerMacFor(rpi::otp::MacInterface::Ethernet, message);
+}
+
+bool GetCustomerMacWifi(FastbootDevice * /* device */, const std::vector<std::string> & /* args */,
+                        std::string *message)
+{
+    return GetCustomerMacFor(rpi::otp::MacInterface::Wifi, message);
+}
+
+bool GetCustomerMacBt(FastbootDevice * /* device */, const std::vector<std::string> & /* args */,
+                      std::string *message)
+{
+    return GetCustomerMacFor(rpi::otp::MacInterface::Bluetooth, message);
 }
 
 bool GetMmcCid(FastbootDevice * /* device */, const std::vector<std::string> & /* args */,

@@ -171,6 +171,48 @@ This fastbootd adds the following OEM commands beyond standard AOSP:
 |---------|-------------|---------|
 | `oem led <pattern>` | Control status LED | `fastboot oem led BOOT` |
 
+### Customer MAC Addresses and OTP (BCM2712)
+
+| Command | Description | Example |
+|---------|-------------|---------|
+| `oem mac get <iface>` | Read the customer MAC override row | `fastboot oem mac get ethernet` |
+| `oem mac check <mac>` | Validate an address without writing it | `fastboot oem mac check 2c:cf:67:e6:d5:e5` |
+| `oem mac set <iface> <mac>` | Program the customer MAC override row | `fastboot oem mac set ethernet 2c:cf:67:e6:d5:e5` |
+| `oem otp get <row> [count]` | Read customer OTP rows | `fastboot oem otp get 0 8` |
+| `oem otp set <row> <word>...` | Program customer OTP rows | `fastboot oem otp set 0 0x11223344 0x00005566` |
+
+`<iface>` is `ethernet`, `wifi` or `bluetooth`. The customer MAC rows override the
+Raspberry Pi-programmed rows 50-55, and the bootloader reads them at reset, so a
+newly programmed address does not appear in `getvar mac-ethernet` (which reports
+what the running firmware chose) until the device is power-cycled. Read back what
+was programmed with `getvar customer-mac-ethernet`, `customer-mac-wifi` or
+`customer-mac-bt` instead.
+
+`oem otp` rows are indices `0`-`7` into the customer region, matching the
+`SET_CUSTOMER_OTP` mailbox tag rather than the absolute OTP row numbers (36-43 on
+pre-BCM2712 parts, 77-84 on BCM2712). Use them for data the bootloader does not
+interpret — for example MAC addresses for PCIe or USB network interfaces, which
+the device's own OS is then responsible for applying.
+
+**One-time programmable.** Fuses only ever blow from `0` to `1`, so a row that
+already holds a different value cannot be corrected. Both writers read the target
+rows first: writing the value already present succeeds and reports it, while
+writing over a differently populated row fails and changes nothing. Multicast
+addresses, `00:00:00:00:00:00` and `ff:ff:ff:ff:ff:ff` are refused, the last
+because the bootloader treats it as "no override".
+
+**Interfaces used.** Writes go to `/dev/vcio_provisioning`, the filtered mailbox
+node whose permitted tag list is exactly these OTP writes, falling back to
+`/dev/vcio` on kernels from before that node existed. Customer OTP rows are read
+from the kernel's `nvmem_cust` device, because no filtered node permits the
+matching read tags; the mailbox answers where there is no such device, as on
+pre-BCM2712 parts. MAC addresses are read through the per-interface tags rather
+than the raw `nvmem_mac` rows, whose octet order within a row is not the one the
+tags use — the factory rows demonstrate the difference.
+
+**Requires:** a BCM2712 part for `oem mac`. The MAC tags do not exist on earlier
+SoCs, and the command reports that rather than failing obscurely.
+
 ---
 
 ## Building
