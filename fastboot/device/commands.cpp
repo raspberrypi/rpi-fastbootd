@@ -769,8 +769,8 @@ namespace {
             cipher = args[4];
         }
 
-#ifdef HAVE_LIBCRYPTSETUP
         std::string error_msg;
+#ifdef HAVE_LIBCRYPTSETUP
         if (CryptInitNative(block_device, args[3], cipher, luks_key, &error_msg)) {
             return device->WriteOkay("LUKS device formatted successfully");
         }
@@ -812,7 +812,8 @@ namespace {
         int ret = rpi::process_spawn_blocking(&subprocess_rc, "cryptsetup", argv, NULL);
 
         if (ret) {
-            return device->WriteFail(strerror(ret));
+            // Gadgets ship no cryptsetup binary, so ENOENT here would mask the real error.
+            return device->WriteFail(error_msg.empty() ? strerror(ret) : error_msg);
         } else if (subprocess_rc) {
             return device->WriteFail("Cryptsetup failed");
         }
@@ -843,8 +844,8 @@ namespace {
             return device->WriteFail("Cannot perform cryptopen for device " + block_device_path + " as no mapped name specified.");
         }
 
-#ifdef HAVE_LIBCRYPTSETUP
         std::string error_msg;
+#ifdef HAVE_LIBCRYPTSETUP
         if (CryptOpenNative(block_device_path, mapped_name, luks_key, &error_msg)) {
             AfterCryptOpen(device, mapped_name);
             return device->WriteOkay("LUKS device opened successfully");
@@ -878,7 +879,7 @@ namespace {
         int ret = rpi::process_spawn_blocking(&subprocess_rc, "cryptsetup", argv, NULL);
 
         if (ret) {
-            return device->WriteFail(strerror(ret));
+            return device->WriteFail(error_msg.empty() ? strerror(ret) : error_msg);
         } else if (subprocess_rc) {
             return device->WriteFail("cryptsetup luksOpen failed.");
         }

@@ -127,6 +127,16 @@ void CleanupDeviceMapper(const std::string& name) {
 #endif
 }
 
+#ifdef HAVE_LIBCRYPTSETUP
+TEST_CASE("LUKS default key size follows the cipher mode", "[crypto][keysize]") {
+    REQUIRE(LuksDefaultKeySizeBits("aes-xts-plain64") == 512);
+    REQUIRE(LuksDefaultKeySizeBits("aes") == 512);
+    REQUIRE(LuksDefaultKeySizeBits("xchacha12,aes-adiantum-plain64") == 256);
+    REQUIRE(LuksDefaultKeySizeBits("xchacha20,aes-adiantum-plain64") == 256);
+    REQUIRE(LuksDefaultKeySizeBits("aes-cbc-essiv:sha256") == 256);
+}
+#endif
+
 TEST_CASE("LUKS Crypto Operations", "[crypto][luks]") {
     // Check if running with sufficient privileges
     if (getuid() != 0) {
@@ -191,6 +201,33 @@ TEST_CASE("LUKS Crypto Operations", "[crypto][luks]") {
         CleanupDeviceMapper(mapped_name);
     }
     
+    SECTION("LUKS Format and Open - Adiantum") {
+        const std::string adiantum = "xchacha12,aes-adiantum-plain64";
+        bool format_result = CryptInitNative(loop.GetDevice(), test_label, adiantum,
+                                            test_key, &error_msg);
+        if (!format_result) {
+            WARN("Format failed: " << error_msg);
+        }
+        REQUIRE(format_result);
+
+        struct crypt_device *cd = NULL;
+        REQUIRE(crypt_init(&cd, loop.GetDevice().c_str()) >= 0);
+        REQUIRE(crypt_load(cd, CRYPT_LUKS, NULL) >= 0);
+        REQUIRE(std::string(crypt_get_cipher(cd)) == "xchacha12,aes");
+        REQUIRE(std::string(crypt_get_cipher_mode(cd)) == "adiantum-plain64");
+        REQUIRE(crypt_get_volume_key_size(cd) == 32);
+        crypt_free(cd);
+
+        bool open_result = CryptOpenNative(loop.GetDevice(), mapped_name,
+                                          test_key, &error_msg);
+        if (!open_result) {
+            WARN("Open failed: " << error_msg);
+        }
+        REQUIRE(open_result);
+
+        CleanupDeviceMapper(mapped_name);
+    }
+
     SECTION("Key Slot Management - Add User Passphrase") {
         // First format the device
         REQUIRE(CryptInitNative(loop.GetDevice(), test_label, test_cipher,
