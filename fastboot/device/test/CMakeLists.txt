@@ -224,6 +224,7 @@ add_test(NAME gateway_errors COMMAND gateway_test "[errors]")
 add_test(NAME gateway_performance COMMAND gateway_test "[performance]")
 
 add_test(NAME crypto_luks COMMAND crypto_test "[crypto][luks]")
+add_test(NAME crypto_keysize COMMAND crypto_test "[crypto][keysize]")
 add_test(NAME crypto_performance COMMAND crypto_test "[crypto][performance]")
 
 add_test(NAME idp_crypto_all_tests COMMAND idp_crypto_test)

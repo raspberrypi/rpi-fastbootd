@@ -21,6 +21,9 @@ struct CryptFormatParams {
 bool CryptInitNative(const std::string& device_path, const CryptFormatParams& params,
                     const std::string& key_data, std::string* error_msg);
 
+// cryptsetup's default for a cipher spec: 512 bits for XTS, 256 otherwise.
+std::size_t LuksDefaultKeySizeBits(const std::string& cipher);
+
 // Legacy overload for existing callers (commands.cpp)
 bool CryptInitNative(const std::string& device_path, const std::string& label,
                     const std::string& cipher, const std::string& key_data,

@@ -74,6 +74,13 @@ bool CryptInitNative(const std::string& device_path, const CryptFormatParams& fm
     return true;
 }
 
+std::size_t LuksDefaultKeySizeBits(const std::string& cipher) {
+    // XTS splits its key in two; Adiantum's XChaCha12 rejects anything but 256.
+    size_t dash_pos = cipher.find('-');
+    std::string mode = dash_pos == std::string::npos ? "xts-plain64" : cipher.substr(dash_pos + 1);
+    return mode.rfind("xts-", 0) == 0 ? 512 : 256;
+}
+
 // Legacy overload for existing callers
 bool CryptInitNative(const std::string& device_path, const std::string& label,
                     const std::string& cipher, const std::string& key_data,
@@ -81,6 +88,7 @@ bool CryptInitNative(const std::string& device_path, const std::string& label,
     CryptFormatParams params;
     params.cipher = cipher;
     params.label = label;
+    params.key_size_bits = LuksDefaultKeySizeBits(cipher);
     return CryptInitNative(device_path, params, key_data, error_msg);
 }
 
