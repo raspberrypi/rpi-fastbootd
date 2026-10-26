@@ -1423,8 +1423,7 @@ bool GetMmcExtCsd(FastbootDevice* device) {
 bool GetSignedEeprom(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
                            std::string* message) {
     uint32_t signed_bits = 0;
-    if (!rpi::eeprom::ReadDtUInt32("/proc/device-tree/chosen/bootloader/signed",
-                                   &signed_bits)) {
+    if (!rpi::eeprom::ReadSignedBits(&signed_bits)) {
         *message = "not available";
         return true;
     }
@@ -1435,8 +1434,7 @@ bool GetSignedEeprom(FastbootDevice* /* device */, const std::vector<std::string
 bool GetSignedDevkey(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
                          std::string* message) {
     uint32_t signed_bits = 0;
-    if (!rpi::eeprom::ReadDtUInt32("/proc/device-tree/chosen/bootloader/signed",
-                                   &signed_bits)) {
+    if (!rpi::eeprom::ReadSignedBits(&signed_bits)) {
         *message = "not available";
         return true;
     }
@@ -1447,8 +1445,7 @@ bool GetSignedDevkey(FastbootDevice* /* device */, const std::vector<std::string
 bool GetSignedOtp(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
                         std::string* message) {
     uint32_t signed_bits = 0;
-    if (!rpi::eeprom::ReadDtUInt32("/proc/device-tree/chosen/bootloader/signed",
-                                   &signed_bits)) {
+    if (!rpi::eeprom::ReadSignedBits(&signed_bits)) {
         *message = "not available";
         return true;
     }
@@ -1557,43 +1554,17 @@ bool GetBootloaderBuildTimestamp(FastbootDevice* /* device */, const std::vector
     return true;
 }
 
+// Secure boot is on when the bootloader says the customer key digest is in
+// OTP. rpi-otp-private-key, used before, is not in the fastboot image, and it
+// reported the OTP private-key rows, not secure boot.
 bool GetSecure(FastbootDevice* /* device */, const std::vector<std::string>& /* args */,
                std::string* message) {
-    pid_t pid;
-    char *arg[] = {"/usr/bin/rpi-otp-private-key", "-c", NULL};
-    int ret;
-    int wstatus;
-    ret = posix_spawnp(&pid, "/usr/bin/rpi-otp-private-key", NULL, NULL, arg, NULL);
-
-    if (ret) {
-        *message = strerror(ret);
-        return false;
+    uint32_t signed_bits = 0;
+    if (!rpi::eeprom::ReadSignedBits(&signed_bits)) {
+        *message = "not available";
+        return true;
     }
-
-    do {
-        ret = waitpid(pid, &wstatus, 0);
-        if (ret == -1) {
-            *message = "waitpid failed";
-            return false;
-        }
-    } while (!WIFEXITED(wstatus) && !WIFSIGNALED(wstatus));
-
-    // Check the exit status of rpi-otp-private-key -c
-    // Exit code 0 = key is set (non-zero), return "yes"
-    // Exit code 1 = key is all zeros (not set), return "no"
-    if (WIFEXITED(wstatus)) {
-        int exit_status = WEXITSTATUS(wstatus);
-        if (exit_status == 0) {
-            *message = "yes";  // Key is set
-        } else if (exit_status == 1) {
-            *message = "no";   // Key is not set (all zeros)
-        } else {
-            *message = "error"; // Unexpected exit code
-        }
-    } else {
-        *message = "error";  // Process terminated abnormally
-    }
-    
+    *message = (signed_bits & (1U << 3)) ? "yes" : "no";
     return true;
 }
 

@@ -64,6 +64,14 @@ std::string BootloaderBuildTimestamp();
 // Read a big-endian u32 device-tree property. Returns false if missing or short.
 bool ReadDtUInt32(const char* path, uint32_t* value_out);
 
+// The bootloader's secure-boot bit-field, chosen/bootloader/signed: bit 0
+// SIGNED_BOOT in the EEPROM config, bit 2 the ROM development key revoked,
+// bit 3 the customer public key digest written to OTP. A bootloader that
+// reports itself without the property has no secure boot, so that reads as
+// 0. Returns false only when no bootloader node exists to say either way.
+bool ReadSignedBits(uint32_t* bits_out,
+                    const std::string& bootloader_node = "/proc/device-tree/chosen/bootloader");
+
 // Extract MFG_VER from an EEPROM image (scans for "MFG_VER: N" like
 // rpi-eeprom-update). Returns 0 if not found.
 uint32_t ImageMfgVer(const std::vector<uint8_t>& image);

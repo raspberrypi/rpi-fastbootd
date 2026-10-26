@@ -282,6 +282,22 @@ bool ReadDtUInt32(const char* path, uint32_t* value_out) {
     return true;
 }
 
+bool ReadSignedBits(uint32_t* bits_out, const std::string& bootloader_node) {
+    if (!bits_out) {
+        return false;
+    }
+    const std::string property = bootloader_node + "/signed";
+    struct stat st;
+    if (stat(property.c_str(), &st) == 0) {
+        return ReadDtUInt32(property.c_str(), bits_out);
+    }
+    if (stat(bootloader_node.c_str(), &st) == 0 && S_ISDIR(st.st_mode)) {
+        *bits_out = 0;
+        return true;
+    }
+    return false;
+}
+
 std::string BootloaderBuildTimestamp() {
     uint32_t ts = 0;
     if (!ReadDtUInt32("/proc/device-tree/chosen/bootloader/build-timestamp", &ts)) {
