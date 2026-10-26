@@ -12,6 +12,10 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <stdlib.h>
+
+#include <filesystem>
+#include <fstream>
 #include <string>
 #include <vector>
 
@@ -34,4 +38,60 @@ TEST_CASE("ImageMfgVer extracts embedded manufacturing version", "[eeprom]") {
 
 TEST_CASE("CheckMinBootVer runs without error for well-formed images", "[eeprom]") {
     REQUIRE(rpi::eeprom::CheckMinBootVer(MakeImageWithMfgVer(1)).ok);
+}
+
+namespace {
+
+// A chosen/bootloader node in a temporary directory, removed afterwards.
+class BootloaderNode {
+public:
+    BootloaderNode() {
+        char tmpl[] = "/tmp/eeprom_test_XXXXXX";
+        root_ = mkdtemp(tmpl);
+        node_ = root_ + "/bootloader";
+    }
+    ~BootloaderNode() { std::filesystem::remove_all(root_); }
+
+    void Create() { std::filesystem::create_directory(node_); }
+    void WriteSigned(const std::string& raw) {
+        Create();
+        std::ofstream(node_ + "/signed", std::ios::binary) << raw;
+    }
+    const std::string& path() const { return node_; }
+
+private:
+    std::string root_;
+    std::string node_;
+};
+
+}  // namespace
+
+TEST_CASE("ReadSignedBits reads the bootloader's secure-boot bit-field", "[eeprom]") {
+    BootloaderNode node;
+    node.WriteSigned(std::string("\x00\x00\x00\x09", 4));
+    uint32_t bits = 0;
+    REQUIRE(rpi::eeprom::ReadSignedBits(&bits, node.path()));
+    REQUIRE(bits == 9);
+}
+
+TEST_CASE("ReadSignedBits reads no secure boot from a bootloader without the property",
+          "[eeprom]") {
+    BootloaderNode node;
+    node.Create();
+    uint32_t bits = 0xffffffff;
+    REQUIRE(rpi::eeprom::ReadSignedBits(&bits, node.path()));
+    REQUIRE(bits == 0);
+}
+
+TEST_CASE("ReadSignedBits cannot tell without a bootloader node", "[eeprom]") {
+    BootloaderNode node;
+    uint32_t bits = 0;
+    REQUIRE_FALSE(rpi::eeprom::ReadSignedBits(&bits, node.path()));
+}
+
+TEST_CASE("ReadSignedBits refuses a malformed property rather than reading 0", "[eeprom]") {
+    BootloaderNode node;
+    node.WriteSigned(std::string("\x00\x08", 2));
+    uint32_t bits = 0;
+    REQUIRE_FALSE(rpi::eeprom::ReadSignedBits(&bits, node.path()));
 }
