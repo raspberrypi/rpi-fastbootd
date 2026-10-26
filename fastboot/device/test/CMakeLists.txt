@@ -137,7 +137,14 @@ target_include_directories(idp_crypto_test PRIVATE
 # EEPROM image parsing and min-boot-version checks
 add_executable(eeprom_test eeprom_test.cpp ../eeprom.cpp)
 
-target_link_libraries(eeprom_test PRIVATE Catch2::Catch2WithMain)
+target_link_libraries(eeprom_test PRIVATE
+    Catch2::Catch2WithMain
+    ${FLASHROM_LIBRARIES}
+    OpenSSL::Crypto
+    base
+    log
+)
+target_link_directories(eeprom_test PRIVATE "/usr/lib/aarch64-linux-gnu/android")
 
 target_compile_features(eeprom_test PRIVATE cxx_std_17)
 
