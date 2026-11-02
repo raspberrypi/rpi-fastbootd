@@ -54,6 +54,7 @@
 
 #include "constants.h"
 #include "eeprom.h"
+#include "file_write.h"
 #include "otp.h"
 #include "fastboot_device.h"
 #include "flashing.h"
@@ -1138,30 +1139,24 @@ ssize_t bulk_write(int bulk_in, const char *buf, size_t length)
         return device->WriteOkay("Unmounted " + mountpoint);
     }
 
-    #define DOWNLOAD_FILE_USAGE "e.g:\r\n\toem download-file <path-to-destination>"
+    #define DOWNLOAD_FILE_USAGE "e.g:\r\n\toem download-file <path-to-destination> [mode]"
     static bool oem_cmd_download_file(FastbootDevice* device, const std::vector<std::string>& args) {
         if (args.size() < 3) {
-            return device->WriteStatus(FastbootResult::FAIL, "Invalid argument count. Wanted oem download-file <current-path> <path-to-destination>");
+            return device->WriteStatus(FastbootResult::FAIL, "Invalid argument count. Wanted oem download-file <path-to-destination> [mode]");
         }
-        auto path = args[2].c_str();
-        FILE* file = fopen(path, "w+");
-        if (file == NULL){
-            return device->WriteFail("Error opening file, ERRNO: " + std::to_string(errno));
+        // The mode is optional so that every existing Imager, which sends only
+        // a path and writes to vfat where a mode cannot be set, is unaffected.
+        std::optional<mode_t> mode;
+        if (args.size() >= 4) {
+            mode = rpi::file_write::ParseMode(args[3]);
+            if (!mode) {
+                return device->WriteFail("Invalid mode '" + args[3] + "': octal, at most 0777");
+            }
         }
-        int size = device->download_data().size();
-        int cursor = 0;
-        int page_size = 0;
-        char *ptr_data = device->download_data().data();
-
-        if (size==0){
-            return device->WriteFail("Buffer size zero. Check file was successfully staged");
-        }
-        page_size = sysconf(_SC_PAGE_SIZE);
-
-        while (cursor < size)
-        {
-            cursor += fwrite(ptr_data + cursor, sizeof device->download_data().data()[0], std::min(page_size, size - cursor), file);
-            fflush(file);
+        auto& data = device->download_data();
+        auto result = rpi::file_write::WriteFile(args[2], data.data(), data.size(), mode);
+        if (!result.ok) {
+            return device->WriteFail(result.err);
         }
 
         device->download_data().clear();
