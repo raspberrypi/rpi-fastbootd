@@ -176,6 +176,20 @@ add_test(NAME otp_all_tests COMMAND otp_test)
 add_test(NAME otp_mac COMMAND otp_test "[mac]")
 add_test(NAME otp_rows COMMAND otp_test "[rows]")
 
+# oem download-file's write path; libc only, like otp.cpp. The vfat case
+# loop-mounts an image, so it skips unless run as root.
+add_executable(file_write_test file_write_test.cpp ../file_write.cpp)
+
+target_link_libraries(file_write_test PRIVATE Catch2::Catch2WithMain)
+
+target_compile_features(file_write_test PRIVATE cxx_std_17)
+
+target_include_directories(file_write_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/..
+)
+
+add_test(NAME file_write_all_tests COMMAND file_write_test)
+
 # Link the pre-built utility.cpp.o from the fastbootd target to avoid
 # re-compiling utility.cpp (which drags in the full transport stack).
 set(UTILITY_OBJ $<TARGET_OBJECTS:fastbootd>)
