@@ -190,33 +190,43 @@ static struct DescV2 v2_descriptor = {
         .ss_descs = ss_descriptors,
 };
 
-// Reimplementing since usb_ffs_close() does not close the control FD.
+// ep0 outlives every session. Closing it unbinds the gadget from the UDC,
+// and only fastboot_udc_attach, run once at boot, binds it again: the next
+// session would wait for a host that can no longer see the device.
+static android::base::unique_fd& Ep0() {
+    static android::base::unique_fd fd;
+    return fd;
+}
+
+// Bulk endpoints only; see Ep0().
 static void CloseFunctionFs(usb_handle* h) {
     h->bulk_in.reset();
     h->bulk_out.reset();
-    h->control.reset();
 }
 
 static bool InitFunctionFs(usb_handle* h) {
     LOG(INFO) << "initializing functionfs";
 
-    if (h->control < 0) {  // might have already done this before
+    android::base::unique_fd& control = Ep0();
+    if (control < 0) {
         LOG(INFO) << "opening control endpoint " << kUsbFfsFastbootEp0;
-        h->control.reset(open(kUsbFfsFastbootEp0, O_RDWR));
-        if (h->control < 0) {
+        control.reset(open(kUsbFfsFastbootEp0, O_RDWR));
+        if (control < 0) {
             PLOG(ERROR) << "cannot open control endpoint " << kUsbFfsFastbootEp0;
             goto err;
         }
 
-        auto ret = write(h->control.get(), &v2_descriptor, sizeof(v2_descriptor));
+        auto ret = write(control.get(), &v2_descriptor, sizeof(v2_descriptor));
         if (ret < 0) {
             PLOG(ERROR) << "cannot write descriptors " << kUsbFfsFastbootEp0;
+            control.reset();
             goto err;
         }
 
-        ret = write(h->control.get(), &strings, sizeof(strings));
+        ret = write(control.get(), &strings, sizeof(strings));
         if (ret < 0) {
             PLOG(ERROR) << "cannot write strings " << kUsbFfsFastbootEp0;
+            control.reset();
             goto err;
         }
         // Signal only when writing the descriptors to ffs
