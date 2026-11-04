@@ -1615,11 +1615,20 @@ ssize_t bulk_write(int bulk_in, const char *buf, size_t length)
             return device->WriteFail("bmap-load: download buffer too small for declared ranges");
         }
 
+        std::vector<BmapRange> ranges(hdr.range_count);
+        memcpy(ranges.data(), buf.data() + sizeof(BmapHeader),
+               hdr.range_count * sizeof(BmapRange));
+        for (uint32_t i = 0; i < hdr.range_count; i++) {
+            if (ranges[i].end_block < ranges[i].start_block) {
+                return device->WriteFail(android::base::StringPrintf(
+                        "bmap-load: range %u ends at block %u, before it starts at %u", i,
+                        ranges[i].end_block, ranges[i].start_block));
+            }
+        }
+
         g_bmap_state.block_device = "/dev/" + block_device;
         g_bmap_state.block_size   = hdr.block_size;
-        g_bmap_state.ranges.resize(hdr.range_count);
-        memcpy(g_bmap_state.ranges.data(), buf.data() + sizeof(BmapHeader),
-               hdr.range_count * sizeof(BmapRange));
+        g_bmap_state.ranges       = std::move(ranges);
 
         return device->WriteOkay(android::base::StringPrintf(
                 "bmap loaded: %u ranges, block_size=%u, device=%s",
@@ -1690,7 +1699,14 @@ ssize_t bulk_write(int bulk_in, const char *buf, size_t length)
             while (remaining > 0) {
                 size_t to_read = (size_t)std::min(remaining, (uint64_t)kReadBuf);
                 ssize_t n = read(handle.fd(), read_buf.data(), to_read);
-                if (n <= 0) {
+                if (n == 0) {
+                    device->WriteFail(android::base::StringPrintf(
+                            "bmap-verify: range %u runs past the end of %s", i,
+                            block_device.c_str()));
+                    io_error = true;
+                    break;
+                }
+                if (n < 0) {
                     device->WriteFail(android::base::StringPrintf(
                             "bmap-verify: read error at range %u: %s", i, strerror(errno)));
                     io_error = true;
