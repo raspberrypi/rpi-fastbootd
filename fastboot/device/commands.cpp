@@ -1691,18 +1691,19 @@ ssize_t bulk_write(int bulk_in, const char *buf, size_t length)
 
             uint64_t remaining = range_bytes;
             bool io_error = false;
+            bool fail_sent = false;
             while (remaining > 0) {
                 size_t to_read = (size_t)std::min(remaining, (uint64_t)kReadBuf);
                 ssize_t n = read(handle.fd(), read_buf.data(), to_read);
                 if (n == 0) {
-                    device->WriteFail(android::base::StringPrintf(
+                    fail_sent = device->WriteFail(android::base::StringPrintf(
                             "bmap-verify: range %u runs past the end of %s", i,
                             block_device.c_str()));
                     io_error = true;
                     break;
                 }
                 if (n < 0) {
-                    device->WriteFail(android::base::StringPrintf(
+                    fail_sent = device->WriteFail(android::base::StringPrintf(
                             "bmap-verify: read error at range %u: %s", i, strerror(errno)));
                     io_error = true;
                     break;
@@ -1716,7 +1717,8 @@ ssize_t bulk_write(int bulk_in, const char *buf, size_t length)
             EVP_DigestFinal_ex(ctx, actual, &digest_len);
             EVP_MD_CTX_free(ctx);
 
-            if (io_error) return false;
+            // The FAIL is the reply; false would also end the host's session.
+            if (io_error) return fail_sent;
 
             if (memcmp(actual, r.sha256, 32) != 0) {
                 // Format both hashes as hex for the failure message
