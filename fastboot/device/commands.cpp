@@ -1648,6 +1648,18 @@ ssize_t bulk_write(int bulk_in, const char *buf, size_t length)
             return device->WriteFail("bmap-verify: cannot open " + block_device);
         }
 
+        // Hash what the storage holds, not what the page cache remembers: an
+        // unaligned flash tail is written through the cache. fdatasync also
+        // flushes the card's own write cache before the pages are dropped.
+        if (fdatasync(handle.fd()) != 0) {
+            return device->WriteFail("bmap-verify: cannot flush " + block_device + ": " +
+                                     strerror(errno));
+        }
+        if (int rc = posix_fadvise(handle.fd(), 0, 0, POSIX_FADV_DONTNEED); rc != 0) {
+            return device->WriteFail("bmap-verify: cannot drop cached pages of " +
+                                     block_device + ": " + strerror(rc));
+        }
+
         const uint32_t block_size  = g_bmap_state.block_size;
         const uint32_t range_count = g_bmap_state.ranges.size();
         constexpr size_t kReadBuf  = 1 * 1024 * 1024; // 1 MB chunks
