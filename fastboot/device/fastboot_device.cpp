@@ -25,6 +25,7 @@
 
 #include "constants.h"
 #include "flashing.h"
+#include "session_policy.h"
 #include "tcp_client.h"
 #include "usb_client.h"
 
@@ -149,9 +150,13 @@ bool FastbootDevice::WriteStatus(FastbootResult result, const std::string& messa
     auto write_ret = this->get_transport()->Write(buf, response_len);
     if (write_ret != static_cast<ssize_t>(response_len)) {
         PLOG(ERROR) << "Failed to write " << message;
+        transport_failed_ = true;
         return false;
     }
 
+    if (result == FastbootResult::OKAY || result == FastbootResult::FAIL) {
+        replied_ = true;
+    }
     return true;
 }
 
@@ -164,11 +169,14 @@ bool FastbootDevice::HandleData(bool read, char* data, uint64_t size) {
                                      : this->get_transport()->Write(data, size);
     if (read_write_data_size == -1) {
         LOG(ERROR) << (read ? "read from" : "write to") << " transport failed";
+        transport_failed_ = true;
         return false;
     }
+    // A short transfer leaves the host and device out of step on the stream.
     if (static_cast<size_t>(read_write_data_size) != size) {
         LOG(ERROR) << (read ? "read" : "write") << " expected " << size << " bytes, got "
                    << read_write_data_size;
+        transport_failed_ = true;
         return false;
     }
     return true;
@@ -219,9 +227,10 @@ void FastbootDevice::ExecuteCommands() {
         // End the session rather than continue: the handler stopped somewhere
         // it did not choose to, and this loop cannot know what it left behind.
         // Handlers that can clean up after themselves should still do so.
-        bool keep_going = false;
+        bool handler_ok = false;
+        replied_ = false;
         try {
-            keep_going = found_command->second(this, args);
+            handler_ok = found_command->second(this, args);
         } catch (const std::exception& e) {
             LOG(ERROR) << "Command '" << command << "' threw: " << e.what();
             WriteStatus(FastbootResult::FAIL, std::string("internal error: ") + e.what());
@@ -232,8 +241,17 @@ void FastbootDevice::ExecuteCommands() {
             return;
         }
 
-        if (!keep_going) {
-            return;
+        switch (DecideAfterCommand(handler_ok, replied_, transport_failed_)) {
+            case AfterCommand::EndSession:
+                LOG(ERROR) << "Transport failed during '" << command << "'; ending session";
+                return;
+            case AfterCommand::ReplyFailThenNext:
+                LOG(WARNING) << "Command '" << command << "' failed without replying";
+                WriteFail("command failed");
+                if (transport_failed_) return;
+                break;
+            case AfterCommand::NextCommand:
+                break;
         }
     }
 }

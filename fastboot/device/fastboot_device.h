@@ -68,4 +68,9 @@ class FastbootDevice {
     std::unique_ptr<Transport> transport_;
     std::vector<char> download_data_;
     std::string active_slot_;
+
+    // Per command: whether an OKAY or FAIL went out, and whether the
+    // transport failed a read or write.
+    bool replied_ = false;
+    bool transport_failed_ = false;
 };
