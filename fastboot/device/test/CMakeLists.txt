@@ -190,6 +190,15 @@ target_include_directories(file_write_test PRIVATE
 
 add_test(NAME file_write_all_tests COMMAND file_write_test)
 
+# Session policy: what the command loop does after a handler returns
+add_executable(session_policy_test session_policy_test.cpp)
+target_link_libraries(session_policy_test PRIVATE Catch2::Catch2WithMain)
+target_compile_features(session_policy_test PRIVATE cxx_std_17)
+target_include_directories(session_policy_test PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/..
+)
+add_test(NAME session_policy_all_tests COMMAND session_policy_test)
+
 # Link the pre-built utility.cpp.o from the fastbootd target to avoid
 # re-compiling utility.cpp (which drags in the full transport stack).
 set(UTILITY_OBJ $<TARGET_OBJECTS:fastbootd>)
@@ -283,6 +292,7 @@ message(STATUS "  - crypto_test: libcryptsetup LUKS operations")
 message(STATUS "  - verity_test: dm-verity hash tree generation")
 message(STATUS "  - eeprom_test: EEPROM image parsing and min-boot-version checks")
 message(STATUS "  - otp_test: customer OTP row and MAC address helpers")
+message(STATUS "  - session_policy_test: when a failed command ends the session")
 message(STATUS "  - Run tests with: ctest --test-dir build/fastboot/device/test")
 message(STATUS "  - Or directly: build/fastboot/device/test/<test_name>")
 message(STATUS "  - For verbose output: <test> -s")
