@@ -147,6 +147,20 @@ This fastbootd adds the following OEM commands beyond standard AOSP:
 | `oem download-file <dest>` | Write staged data to file | `fastboot stage keys.bin && fastboot oem download-file /persistent/keys.bin` |
 | `oem upload-file <path>` | Stage file for host download | `fastboot oem upload-file /persistent/hashes.json && fastboot upload hashes.json` |
 
+### Write Verification
+
+| Command | Description | Example |
+|---------|-------------|---------|
+| `oem bmap-load <dev>` | Load block ranges and their SHA-256s from staged data | `fastboot stage ranges.bin && fastboot oem bmap-load mmcblk0` |
+| `oem bmap-verify <dev>` | Read each range back from the device and compare | `fastboot oem bmap-verify mmcblk0` |
+
+The staged data is little-endian: a 16-byte header (`"BMAP"`, block size as a power of two,
+range count, a zero word), then 40 bytes per range (first block, last block inclusive,
+SHA-256 of those blocks). Verification flushes the device and drops its cached pages first,
+so it reads what the storage holds. It sends `INFO verifying range i/n` before each range,
+then `OKAY verified N ranges ok`, or `FAIL <range>:<expected>:<actual>` for the first
+mismatch. A host can build the ranges from a bmaptool `.bmap` file or from the bytes it flashed.
+
 ### GPIO Control
 
 | Command | Description | Example |
