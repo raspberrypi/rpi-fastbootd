@@ -5,6 +5,18 @@
 #include <optional>
 #include <string>
 
+// The LUKS2 encryption sector sizes dm-crypt accepts. Only the exact
+// decimal text is read, so "4096 " or "04096" is refused, not guessed at.
+inline bool ParseLuksSectorSize(const std::string& text, std::size_t* sector_size) {
+    for (std::size_t size : {512, 1024, 2048, 4096}) {
+        if (text == std::to_string(size)) {
+            *sector_size = size;
+            return true;
+        }
+    }
+    return false;
+}
+
 #ifdef HAVE_LIBCRYPTSETUP
 
 // Parameters for LUKS2 container creation, matching IDPluks fields
@@ -27,7 +39,7 @@ std::size_t LuksDefaultKeySizeBits(const std::string& cipher);
 // Legacy overload for existing callers (commands.cpp)
 bool CryptInitNative(const std::string& device_path, const std::string& label,
                     const std::string& cipher, const std::string& key_data,
-                    std::string* error_msg);
+                    std::string* error_msg, std::size_t sector_size = 512);
 
 bool CryptOpenNative(const std::string& device_path, const std::string& mapped_name,
                     const std::string& key_data, std::string* error_msg);

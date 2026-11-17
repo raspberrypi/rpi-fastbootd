@@ -125,7 +125,7 @@ This fastbootd adds the following OEM commands beyond standard AOSP:
 
 | Command | Description | Example |
 |---------|-------------|---------|
-| `oem cryptinit <dev> <label> [cipher]` | Format partition with LUKS2 | `fastboot oem cryptinit /dev/mmcblk0p3 userdata` |
+| `oem cryptinit <dev> <label> [cipher] [sector-size]` | Format partition with LUKS2. Sector size 512 (default), 1024, 2048 or 4096; the cipher must be given with it | `fastboot oem cryptinit /dev/mmcblk0p3 userdata aes-xts-plain64 4096` |
 | `oem cryptopen <dev> <name>` | Open encrypted partition | `fastboot oem cryptopen /dev/mmcblk0p3 userdata_crypt` |
 | `oem cryptsetpassword <dev> <pass>` | Change LUKS passphrase | `fastboot oem cryptsetpassword /dev/mmcblk0p3 newpass` |
 
