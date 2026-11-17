@@ -84,11 +84,12 @@ std::size_t LuksDefaultKeySizeBits(const std::string& cipher) {
 // Legacy overload for existing callers
 bool CryptInitNative(const std::string& device_path, const std::string& label,
                     const std::string& cipher, const std::string& key_data,
-                    std::string* error_msg) {
+                    std::string* error_msg, std::size_t sector_size) {
     CryptFormatParams params;
     params.cipher = cipher;
     params.label = label;
     params.key_size_bits = LuksDefaultKeySizeBits(cipher);
+    params.sector_size = sector_size;
     return CryptInitNative(device_path, params, key_data, error_msg);
 }
 

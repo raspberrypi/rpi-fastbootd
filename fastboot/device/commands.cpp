@@ -44,9 +44,10 @@
 #include <gpiod.h>
 #endif
 
-// Crypto operations via libcryptsetup (conditional compilation)
-#ifdef HAVE_LIBCRYPTSETUP
+// Crypto operations via libcryptsetup (conditional compilation). The header
+// itself guards what needs libcryptsetup; ParseLuksSectorSize does not.
 #include "crypto_native.h"
+#ifdef HAVE_LIBCRYPTSETUP
 #include <rpi_verity_sign.h>
 #endif
 #include "partition_lock_manager.h"
@@ -740,14 +741,21 @@ namespace {
         return msg;
     }
 
-    // oem cryptinit <blkdev> <label>
+    // oem cryptinit <blkdev> <label> [cipher] [sector size]
     static bool oem_cmd_cryptinit(FastbootDevice* device, const std::vector<std::string>& args) {
         if (args.size() < 4) {
-            return device->WriteFail("Insufficient arguments. Usage: oem cryptinit <block_device> <label> [cipher]");
+            return device->WriteFail("Insufficient arguments. Usage: oem cryptinit <block_device> <label> [cipher] [sector_size]");
         }
 
         if (args[2].empty()) {
-            return device->WriteFail("Block device not specified. Usage: oem cryptinit <block_device> <label> [cipher]");
+            return device->WriteFail("Block device not specified. Usage: oem cryptinit <block_device> <label> [cipher] [sector_size]");
+        }
+
+        // Without a sector size the native path formats with 512-byte
+        // sectors and the cryptsetup fallback lets cryptsetup choose, as before.
+        std::size_t sector_size = 0;
+        if (args.size() >= 6 && !ParseLuksSectorSize(args[5], &sector_size)) {
+            return device->WriteFail("Sector size must be 512, 1024, 2048 or 4096, not '" + args[5] + "'");
         }
 
         auto block_device = args[2];
@@ -776,7 +784,8 @@ namespace {
 
         std::string error_msg;
 #ifdef HAVE_LIBCRYPTSETUP
-        if (CryptInitNative(block_device, args[3], cipher, luks_key, &error_msg)) {
+        if (CryptInitNative(block_device, args[3], cipher, luks_key, &error_msg,
+                            sector_size ? sector_size : 512)) {
             return device->WriteOkay("LUKS device formatted successfully");
         }
         
@@ -799,7 +808,9 @@ namespace {
         char label[]          = "--label";
         char force_password[] = "--force-password";
 
-        char * const argv[] = {
+        std::string sector_arg = "--sector-size=" + std::to_string(sector_size);
+
+        std::vector<char *> argv = {
             cryptsetup,
             batch_mode,
             luksFormat,
@@ -810,11 +821,14 @@ namespace {
             const_cast<char *>(block_device.c_str()),
             (char*)"--key-file",
             const_cast<char *>(keyfile_guard.path.c_str()),
-            NULL
         };
+        if (sector_size) {
+            argv.push_back(const_cast<char *>(sector_arg.c_str()));
+        }
+        argv.push_back(NULL);
 
         int subprocess_rc = -1;
-        int ret = rpi::process_spawn_blocking(&subprocess_rc, "cryptsetup", argv, NULL);
+        int ret = rpi::process_spawn_blocking(&subprocess_rc, "cryptsetup", argv.data(), NULL);
 
         if (ret) {
             // Gadgets ship no cryptsetup binary, so ENOENT here would mask the real error.
