@@ -6,19 +6,21 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <linux/fs.h>
 #include <linux/loop.h>
 #include <sys/ioctl.h>
 #include <fstream>
 #include <string>
 #include <cstring>
+#include <cstdlib>
 #include <errno.h>
 #include <vector>
 #include <algorithm>
 #include <chrono>
 
+#include "../crypto_native.h"
 #ifdef HAVE_LIBCRYPTSETUP
 #include <libcryptsetup.h>
-#include "../crypto_native.h"
 #endif
 
 // Helper class to manage loopback devices for testing
@@ -127,6 +129,20 @@ void CleanupDeviceMapper(const std::string& name) {
 #endif
 }
 
+TEST_CASE("LUKS sector size argument", "[crypto][sectorsize]") {
+    for (std::size_t size : {512, 1024, 2048, 4096}) {
+        std::size_t parsed = 0;
+        REQUIRE(ParseLuksSectorSize(std::to_string(size), &parsed));
+        REQUIRE(parsed == size);
+    }
+    for (const char* text : {"", "0", "256", "8192", "4k", "04096", "4096 ", " 4096", "-512", "3000"}) {
+        std::size_t parsed = 0;
+        INFO("text: '" << text << "'");
+        REQUIRE_FALSE(ParseLuksSectorSize(text, &parsed));
+        REQUIRE(parsed == 0);
+    }
+}
+
 #ifdef HAVE_LIBCRYPTSETUP
 TEST_CASE("LUKS default key size follows the cipher mode", "[crypto][keysize]") {
     REQUIRE(LuksDefaultKeySizeBits("aes-xts-plain64") == 512);
@@ -226,6 +242,79 @@ TEST_CASE("LUKS Crypto Operations", "[crypto][luks]") {
         REQUIRE(open_result);
 
         CleanupDeviceMapper(mapped_name);
+    }
+
+    SECTION("LUKS Format - default sector size is 512") {
+        // Without a sector size the format stays at 512, as it was.
+        REQUIRE(CryptInitNative(loop.GetDevice(), test_label, test_cipher,
+                               test_key, &error_msg));
+        struct crypt_device *cd = NULL;
+        REQUIRE(crypt_init(&cd, loop.GetDevice().c_str()) >= 0);
+        REQUIRE(crypt_load(cd, CRYPT_LUKS, NULL) >= 0);
+        REQUIRE(crypt_get_sector_size(cd) == 512);
+        crypt_free(cd);
+    }
+
+    // Every accepted size, with both ciphers the provisioner can ask for: the
+    // header records the size, the opened device reports it to the kernel, and
+    // data written through the mapping comes back unchanged.
+    for (const std::string& cipher : {std::string("aes-xts-plain64"),
+                                      std::string("xchacha12,aes-adiantum-plain64")}) {
+        for (std::size_t size : {512, 1024, 2048, 4096}) {
+            DYNAMIC_SECTION("LUKS Format - sector size " << size << ", " << cipher) {
+                bool format_result = CryptInitNative(loop.GetDevice(), test_label, cipher,
+                                                    test_key, &error_msg, size);
+                if (!format_result) {
+                    WARN("Format failed: " << error_msg);
+                }
+                REQUIRE(format_result);
+
+                struct crypt_device *cd = NULL;
+                REQUIRE(crypt_init(&cd, loop.GetDevice().c_str()) >= 0);
+                REQUIRE(crypt_load(cd, CRYPT_LUKS, NULL) >= 0);
+                REQUIRE(static_cast<std::size_t>(crypt_get_sector_size(cd)) == size);
+                crypt_free(cd);
+
+                bool open_result = CryptOpenNative(loop.GetDevice(), mapped_name,
+                                                  test_key, &error_msg);
+                if (!open_result) {
+                    WARN("Open failed: " << error_msg);
+                }
+                REQUIRE(open_result);
+
+                const std::string dm_device = "/dev/mapper/" + mapped_name;
+                int fd = open(dm_device.c_str(), O_RDWR | O_DIRECT);
+                REQUIRE(fd >= 0);
+
+                int logical_block = 0;
+                REQUIRE(ioctl(fd, BLKSSZGET, &logical_block) == 0);
+                REQUIRE(static_cast<std::size_t>(logical_block) == size);
+
+                // Direct I/O goes through dm-crypt, not the page cache.
+                const std::size_t len = 64 * 1024;
+                void *out = nullptr, *in = nullptr;
+                REQUIRE(posix_memalign(&out, 4096, len) == 0);
+                REQUIRE(posix_memalign(&in, 4096, len) == 0);
+                for (std::size_t i = 0; i < len; i++)
+                    static_cast<unsigned char*>(out)[i] = static_cast<unsigned char>(i * 31 + size);
+                memset(in, 0, len);
+                bool wrote = pwrite(fd, out, len, 1024 * 1024) == static_cast<ssize_t>(len);
+                bool read_back = wrote && pread(fd, in, len, 1024 * 1024) == static_cast<ssize_t>(len);
+                bool same = read_back && memcmp(out, in, len) == 0;
+                free(out);
+                free(in);
+                close(fd);
+
+                // udev probes a device that was open for writing; removing the
+                // mapping while it does fails with EBUSY and is retried noisily.
+                int settle_rc = system("udevadm settle --timeout=10 >/dev/null 2>&1");
+                INFO("udevadm settle returned " << settle_rc);
+                CleanupDeviceMapper(mapped_name);
+                REQUIRE(wrote);
+                REQUIRE(read_back);
+                REQUIRE(same);
+            }
+        }
     }
 
     SECTION("Key Slot Management - Add User Passphrase") {
