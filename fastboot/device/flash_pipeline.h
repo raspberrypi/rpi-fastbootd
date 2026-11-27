@@ -69,6 +69,18 @@ class FlashPipeline {
     // them -- only that the bytes have been written and synced.
     static void WaitAllIdle();
 
+    // Wait for every session's writes, then report every deferred write that
+    // failed since the last CommitAll() or SetDataPlaneDefault(true), whether
+    // or not its own session already said so. Clears what it reports.
+    static int CommitAll(std::string* err);
+
+    // Whether a data-plane (TCP) session starts with deferral on. Each fastboot
+    // invocation over TCP is a new session, so the control plane sets this for
+    // the sessions that follow, and collects their results with CommitAll().
+    // Turning it on clears earlier failures.
+    static void SetDataPlaneDefault(bool on);
+    static bool DataPlaneDefault();
+
   private:
     struct Outcome {
         int rc = 0;

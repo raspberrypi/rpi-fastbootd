@@ -175,3 +175,95 @@ TEST_CASE("Enable counts both buffers, existing capacity and other sessions' ple
     REQUIRE(b.Disable(&err) == 0);
     REQUIRE(c.Enable(staging, 0, &err));
 }
+
+TEST_CASE("CommitAll reports a failure whose session ended uncollected", "[pipeline][commit]") {
+    FlashPipeline::SetDataPlaneDefault(true);
+    REQUIRE(FlashPipeline::DataPlaneDefault());
+    {
+        // A data-plane session whose connection closes after its last chunk.
+        FlashPipeline p;
+        std::vector<char> data = Payload(64);
+        std::string err;
+        REQUIRE(p.Submit("mapper/cryptroot", &data,
+                         [](std::vector<char>&, std::string* e) {
+                             *e = "disk said no";
+                             return -EIO;
+                         },
+                         &err) == 0);
+    }
+    std::string err;
+    REQUIRE(FlashPipeline::CommitAll(&err) == -EIO);
+    REQUIRE(err.find("mapper/cryptroot (write #1)") != std::string::npos);
+    REQUIRE(err.find("disk said no") != std::string::npos);
+
+    err.clear();
+    REQUIRE(FlashPipeline::CommitAll(&err) == 0);  // reported once
+    REQUIRE(err.empty());
+    FlashPipeline::SetDataPlaneDefault(false);
+}
+
+TEST_CASE("CommitAll records a throwing write too", "[pipeline][commit]") {
+    FlashPipeline::SetDataPlaneDefault(true);
+    {
+        FlashPipeline p;
+        std::vector<char> data = Payload(64);
+        std::string err;
+        REQUIRE(p.Submit("mmcblk0p1", &data,
+                         [](std::vector<char>&, std::string*) -> int {
+                             throw std::runtime_error("boom");
+                         },
+                         &err) == 0);
+    }
+    std::string err;
+    REQUIRE(FlashPipeline::CommitAll(&err) == -EIO);
+    REQUIRE(err.find("write threw: boom") != std::string::npos);
+    FlashPipeline::SetDataPlaneDefault(false);
+}
+
+TEST_CASE("CommitAll waits for another session's write to land", "[pipeline][commit]") {
+    FlashPipeline::SetDataPlaneDefault(true);
+    std::promise<void> release;
+    std::shared_future<void> gate = release.get_future().share();
+    std::atomic<bool> landed{false};
+
+    FlashPipeline p;
+    std::vector<char> data = Payload(64);
+    std::string err;
+    REQUIRE(p.Submit("mmcblk0p2", &data,
+                     [&](std::vector<char>&, std::string*) {
+                         gate.wait();
+                         landed = true;
+                         return 0;
+                     },
+                     &err) == 0);
+
+    auto commit = std::async(std::launch::async, [] {
+        std::string e;
+        return FlashPipeline::CommitAll(&e);
+    });
+    REQUIRE(commit.wait_for(std::chrono::milliseconds(100)) == std::future_status::timeout);
+    release.set_value();
+    REQUIRE(commit.get() == 0);
+    REQUIRE(landed);
+    REQUIRE(p.Join(&err) == 0);
+    FlashPipeline::SetDataPlaneDefault(false);
+}
+
+TEST_CASE("Turning the data-plane default on clears earlier failures", "[pipeline][commit]") {
+    {
+        FlashPipeline p;
+        std::vector<char> data = Payload(64);
+        std::string err;
+        REQUIRE(p.Submit("mmcblk0p3", &data,
+                         [](std::vector<char>&, std::string* e) {
+                             *e = "stale";
+                             return -EIO;
+                         },
+                         &err) == 0);
+    }
+    FlashPipeline::SetDataPlaneDefault(true);
+    std::string err;
+    REQUIRE(FlashPipeline::CommitAll(&err) == 0);
+    FlashPipeline::SetDataPlaneDefault(false);
+    REQUIRE_FALSE(FlashPipeline::DataPlaneDefault());
+}

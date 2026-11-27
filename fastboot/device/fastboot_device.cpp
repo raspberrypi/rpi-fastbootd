@@ -79,7 +79,8 @@ FastbootDevice::FastbootDevice(std::unique_ptr<Transport> transport,
                                bool data_plane_only)
     : kCommandMap(data_plane_only ? BuildDataPlaneCommandMap() : BuildCommandMap()),
       transport_(std::move(transport)),
-      active_slot_("") {}
+      active_slot_(""),
+      data_plane_only_(data_plane_only) {}
 
 FastbootDevice::~FastbootDevice() {
     CloseDevice();
@@ -185,6 +186,12 @@ bool FastbootDevice::HandleData(bool read, char* data, uint64_t size) {
 
 void FastbootDevice::ExecuteCommands() {
     char command[FB_RESPONSE_SZ + 1];
+    if (data_plane_only_ && FlashPipeline::DataPlaneDefault()) {
+        std::string err;
+        if (!flash_pipeline_.Enable(kMaxDownloadSizeDefault, download_data_.capacity(), &err)) {
+            LOG(WARNING) << "Data-plane session: deferred flash writes unavailable: " << err;
+        }
+    }
     for (;;) {
         auto bytes_read = transport_->Read(command, FB_RESPONSE_SZ);
         if (bytes_read == 0) {

@@ -54,6 +54,7 @@ class FastbootDevice {
 
     std::vector<char>& download_data() { return download_data_; }
     FlashPipeline& flash_pipeline() { return flash_pipeline_; }
+    bool data_plane_only() const { return data_plane_only_; }
     Transport* get_transport() { return transport_.get(); }
 
     void set_active_slot(const std::string& active_slot) { active_slot_ = active_slot; }
@@ -73,6 +74,7 @@ class FastbootDevice {
     // that write touches, so member order is not load-bearing here.
     FlashPipeline flash_pipeline_;
     std::string active_slot_;
+    const bool data_plane_only_ = false;
 
     // Per command: whether an OKAY or FAIL went out, and whether the
     // transport failed a read or write.

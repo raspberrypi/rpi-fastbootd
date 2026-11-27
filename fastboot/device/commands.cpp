@@ -2115,10 +2115,16 @@ static bool oem_cmd_flash_pipeline(FastbootDevice* device, const std::vector<std
                                              device->download_data().capacity(), &err)) {
             return device->WriteFail("flash-pipeline: " + err);
         }
+        if (!device->data_plane_only()) {
+            FlashPipeline::SetDataPlaneDefault(true);
+        }
         return device->WriteOkay("deferred flash writes enabled");
     }
     if (mode == "off") {
         std::string err;
+        if (!device->data_plane_only()) {
+            FlashPipeline::SetDataPlaneDefault(false);
+        }
         if (device->flash_pipeline().Disable(&err) != 0) {
             return device->WriteFail("flash-pipeline: " + err);
         }
@@ -2127,13 +2133,17 @@ static bool oem_cmd_flash_pipeline(FastbootDevice* device, const std::vector<std
     return device->WriteFail("Wanted oem flash-pipeline <on|off>");
 }
 
-// oem flash-commit -- block until every deferred write has landed and report
-// the result. The dispatcher already joins before any command that is not
-// download:/flash:, so this exists for the client that has nothing else to say
-// after its last chunk and would otherwise disconnect without ever asking.
+// oem flash-commit -- block until deferred writes have landed and report the
+// result. The dispatcher has already joined this session's own write by the
+// time this runs. On the control plane it also waits for every data-plane
+// session, whose connection may have closed before its last write landed.
 static bool oem_cmd_flash_commit(FastbootDevice* device, const std::vector<std::string>&) {
-    // The join has already happened in ExecuteCommands by the time this runs;
-    // reaching here at all means it came back clean.
+    if (!device->data_plane_only()) {
+        std::string err;
+        if (FlashPipeline::CommitAll(&err) != 0) {
+            return device->WriteFail(err);
+        }
+    }
     return device->WriteOkay("deferred flash writes committed");
 }
 

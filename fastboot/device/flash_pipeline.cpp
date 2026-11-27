@@ -30,6 +30,13 @@ std::mutex g_inflight_mutex;
 std::condition_variable g_inflight_cv;
 int g_inflight_writes = 0;
 
+// Every deferred write that failed since the control plane last turned
+// deferral on or committed. A data-plane session ends with its connection, so
+// the failure of its last write would otherwise reach nobody.
+std::mutex g_failures_mutex;
+std::vector<std::string> g_failures;
+std::atomic<bool> g_data_plane_default{false};
+
 void CountWriteDown() {
     {
         std::lock_guard<std::mutex> lock(g_inflight_mutex);
@@ -202,6 +209,7 @@ int FlashPipeline::Submit(const std::string& desc, std::vector<char>* data, Writ
     // than the one it belongs to, so "mmcblk0p4" alone would not say which of
     // the twenty-five writes to that partition went wrong.
     in_flight_desc_ = desc + " (write #" + std::to_string(++submit_seq_) + ")";
+    std::string what = in_flight_desc_;
 
     {
         std::lock_guard<std::mutex> lock(g_inflight_mutex);
@@ -209,15 +217,32 @@ int FlashPipeline::Submit(const std::string& desc, std::vector<char>* data, Writ
     }
     try {
         in_flight_ = std::async(std::launch::async,
-                                [work = std::move(work), buf = std::move(payload)]() mutable {
+                                [work = std::move(work), buf = std::move(payload),
+                                 what = std::move(what)]() mutable {
                                     // Counted down the moment the bytes are on
                                     // disk, whether or not anyone ever collects
                                     // the result: WaitAllIdle() asks about the
                                     // disk, not about who has been told.
                                     auto landed = android::base::make_scope_guard(CountWriteDown);
                                     Outcome out;
-                                    out.rc = work(buf, &out.err);
+                                    // Caught here, not only in Join(), so a
+                                    // throwing write is recorded like any other.
+                                    try {
+                                        out.rc = work(buf, &out.err);
+                                    } catch (const std::exception& e) {
+                                        out.rc = -EIO;
+                                        out.err = std::string("write threw: ") + e.what();
+                                    } catch (...) {
+                                        out.rc = -EIO;
+                                        out.err = "write threw a non-standard exception";
+                                    }
                                     out.buffer = std::move(buf);
+                                    if (out.rc != 0) {
+                                        // Before the count-down, so CommitAll()
+                                        // cannot return between the two.
+                                        std::lock_guard<std::mutex> lock(g_failures_mutex);
+                                        g_failures.push_back(what + ": " + out.err);
+                                    }
                                     return out;
                                 });
     } catch (...) {
@@ -234,4 +259,32 @@ void FlashPipeline::WaitAllIdle() {
         LOG(INFO) << "Waiting for " << g_inflight_writes << " deferred flash write(s) to land";
     }
     g_inflight_cv.wait(lock, [] { return g_inflight_writes == 0; });
+}
+
+int FlashPipeline::CommitAll(std::string* err) {
+    WaitAllIdle();
+    std::vector<std::string> failures;
+    {
+        std::lock_guard<std::mutex> lock(g_failures_mutex);
+        failures.swap(g_failures);
+    }
+    if (failures.empty()) {
+        return 0;
+    }
+    if (err) {
+        *err = "deferred write of " + android::base::Join(failures, "; deferred write of ") + " failed";
+    }
+    return -EIO;
+}
+
+void FlashPipeline::SetDataPlaneDefault(bool on) {
+    if (on) {
+        std::lock_guard<std::mutex> lock(g_failures_mutex);
+        g_failures.clear();
+    }
+    g_data_plane_default.store(on);
+}
+
+bool FlashPipeline::DataPlaneDefault() {
+    return g_data_plane_default.load();
 }
