@@ -26,6 +26,7 @@
 #include <vector>
 
 #include <fcntl.h>
+#include <signal.h>
 #include <unistd.h>
 
 #include <android-base/logging.h>
@@ -34,6 +35,7 @@
 
 #include "commands.h"
 #include "fastboot_device.h"
+#include "flash_pipeline.h"
 #include "tcp_client.h"
 #include "utility.h"
 #include "variables.h"
@@ -235,8 +237,29 @@ static void LockOtpKeyAtStartup() {
     }
 }
 
+// systemd stops the daemon with SIGTERM. Without this the process died at
+// once, and a deferred flash write still going to disk died with it after the
+// host had been told OKAY. Every thread inherits the blocked mask from here,
+// and one thread waits for the signal, drains, and exits normally.
+static void RunSignalDrainThread(sigset_t set) {
+    std::thread([set] {
+        int sig = 0;
+        sigwait(&set, &sig);
+        LOG(INFO) << "Signal " << sig << ": draining deferred flash writes before exit";
+        FlashPipeline::WaitAllIdle();
+        exit(0);
+    }).detach();
+}
+
 int main(int argc, char* argv[]) {
     android::base::InitLogging(argv, &android::base::KernelLogger);
+
+    sigset_t drain_signals;
+    sigemptyset(&drain_signals);
+    sigaddset(&drain_signals, SIGTERM);
+    sigaddset(&drain_signals, SIGINT);
+    pthread_sigmask(SIG_BLOCK, &drain_signals, nullptr);
+    RunSignalDrainThread(drain_signals);
 
     const char* mode = "usb";
     for (int i = 1; i < argc - 1; ++i) {

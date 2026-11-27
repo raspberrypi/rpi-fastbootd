@@ -8,6 +8,8 @@
 #include <cstdlib>
 #include <cstring>
 
+#include <android-base/logging.h>
+
 namespace rpi {
 
 namespace {
@@ -37,20 +39,26 @@ PartitionLockManager& PartitionLockManager::Instance() {
 PartitionLockGuard PartitionLockManager::Acquire(const std::string& partition_name) {
     std::string key = Canonicalise(partition_name);
 
-    std::shared_ptr<std::mutex> mu;
+    std::shared_ptr<std::binary_semaphore> sem;
     {
         std::lock_guard<std::mutex> g(map_mutex_);
         auto it = locks_.find(key);
         if (it == locks_.end()) {
-            mu = std::make_shared<std::mutex>();
-            locks_.emplace(key, mu);
+            sem = std::make_shared<std::binary_semaphore>(1);
+            locks_.emplace(key, sem);
         } else {
-            mu = it->second;
+            sem = it->second;
         }
     }
 
-    std::unique_lock<std::mutex> lock(*mu);
-    return PartitionLockGuard(std::move(lock));
+    if (!sem->try_acquire()) {
+        // Another session holds this partition -- a deferred write that has
+        // not been joined yet, most likely. Say so, or the wait looks like a
+        // hang from the host.
+        LOG(INFO) << "Waiting for another session to release " << key;
+        sem->acquire();
+    }
+    return PartitionLockGuard(std::move(sem));
 }
 
 }  // namespace rpi
