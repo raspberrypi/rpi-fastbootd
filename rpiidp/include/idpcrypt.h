@@ -88,6 +88,9 @@ struct IDPluks {
     bool Open(std::string_view blkdev) const ;
     bool Close(std::optional<std::string_view> blkdev = std::nullopt) const ;
 
+    // cryptsetup command line used when built without libcryptsetup
+    std::vector<std::string> luks2createcmd(std::string_view blkdev, std::filesystem::path keyfile) const;
+
 private:
     static std::size_t alignUp(std::size_t value, std::size_t alignment) {
         return ((value + alignment - 1) / alignment) * alignment;
@@ -97,7 +100,6 @@ private:
         return (version == 1) ? "LUKS1" : "LUKS2";
     }
 
-    std::vector<std::string> luks2createcmd(std::string_view blkdev, std::filesystem::path keyfile) const;
     std::vector<std::string> luks2opencmd(std::string_view blkdev, std::filesystem::path keyfile) const;
     std::vector<std::string> luks2closecmd(std::string_view mname) const;
 

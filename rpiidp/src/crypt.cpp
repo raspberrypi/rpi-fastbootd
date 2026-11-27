@@ -424,7 +424,9 @@ std::vector<std::string>  IDPluks::luks2createcmd(std::string_view blkdev, std::
    if (sector_size)
       args.push_back("--sector-size=" + std::to_string(sector_size));
 
-   args.push_back("--align-payload=" + std::to_string(pAlignmentBytes / sector_size));
+   // cryptsetup counts --align-payload in 512-byte sectors, whatever the
+   // encryption sector size
+   args.push_back("--align-payload=" + std::to_string(pAlignmentBytes / 512));
 
    args.push_back("--key-file=" + keyfile.string());
 
