@@ -20,6 +20,7 @@ struct IDPluks {
     std::size_t key_size;
     std::string cipher;
     std::size_t sector_size = 512;
+    std::optional<std::size_t> pmap_sector_size; // luks2.sector_size, if set
     std::string mname;
     std::optional<std::string> label;
     std::optional<std::string> uuid;

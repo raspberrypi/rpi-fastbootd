@@ -4,8 +4,8 @@
 //
 // IDP LUKS fields (from nav.cpp validateLUKS / createEncryptedPartition):
 //   Required: key_size (int), cipher (string), hash (string), mname (string), etype (string)
-//   Optional: label (string), uuid (string)
-//   Set by parser: sector_size (from IGconf_device_sector_size: 512|4096)
+//   Optional: label (string), uuid (string), sector_size (512|1024|2048|4096)
+//   Set by parser: sector_size (luks2.sector_size, else IGconf_device_sector_size)
 //                  pAlignmentBytes (from image-palign-bytes)
 
 #include <catch2/catch_test_macros.hpp>
@@ -606,7 +606,7 @@ TEST_CASE("IDP uuid", "[idp][crypto][uuid]") {
 
 
 // ============================================================================
-// IDP field: sector_size (set from IGconf_device_sector_size: 512 | 4096)
+// IDP field: sector_size (luks2.sector_size, else IGconf_device_sector_size)
 // Encryption sector size
 // ============================================================================
 
