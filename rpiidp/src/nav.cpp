@@ -76,6 +76,17 @@ namespace Validation {
          return nr;
       }
 
+      // The dm-crypt sector size, not the device's
+      if (luks.isMember("sector_size")) {
+         const std::set<unsigned int> validSectorSizes = {512, 1024, 2048, 4096};
+
+         if (!luks["sector_size"].isUInt() ||
+               validSectorSizes.find(luks["sector_size"].asUInt()) == validSectorSizes.end()) {
+            nr.error("LUKS sector_size must be 512, 1024, 2048 or 4096.");
+            return nr;
+         }
+      }
+
       // These checks are not for device level validation. They're for sanity
       // checking the parsing only. Device validation may reject a provisioning
       // attempt using a particular value, or the on-device LUKS setup may fail
@@ -406,6 +417,9 @@ std::shared_ptr<Partition> PartitionNavigator::createEncryptedPartition(
    // Optional fields
    if (luks.isMember("label")) {
       luksConfig.label = luks["label"].asString();
+   }
+   if (luks.isMember("sector_size")) {
+      luksConfig.pmap_sector_size = luks["sector_size"].asUInt();
    }
    if (luks.isMember("uuid")) {
       luksConfig.uuid = luks["uuid"].asString();

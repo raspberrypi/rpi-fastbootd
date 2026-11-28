@@ -671,7 +671,17 @@ bool IDPparser::parseIGv2(const Json::Value& json, const IDPversion& version, st
       if (partition->isCryptContainer()) {
          p.luks = partition->luks;
          p.luks->pAlignmentBytes = image_.device_storage.ptable_align;
-         p.luks->sector_size = image_.device_storage.sector_size;
+
+         // The dm-crypt sector size can be set in the PMAP, otherwise it
+         // follows the device. It cannot be smaller than the device's.
+         const std::size_t device_sector = image_.device_storage.sector_size;
+         p.luks->sector_size = p.luks->pmap_sector_size.value_or(device_sector);
+         if (p.luks->sector_size < device_sector) {
+            err = "LUKS sector_size " + std::to_string(p.luks->sector_size) +
+                  " is smaller than IGconf_device_sector_size " +
+                  std::to_string(device_sector);
+            return false;
+         }
       }
       else {
          p.img = partition->img_name;

@@ -14,6 +14,20 @@ target_link_libraries(rpiidp_dtest PRIVATE rpiidp ${JSONCPP_LIBRARIES})
 target_include_directories(rpiidp_ptest PRIVATE ${JSONCPP_INCLUDE_DIR})
 target_include_directories(rpiidp_dtest PRIVATE ${JSONCPP_INCLUDE_DIR})
 
+set(rpiidp_test_targets rpiidp_ptest rpiidp_dtest)
+
+# Catch2 unit tests. Catch2 comes from fastboot/device/test, which is only
+# added with BUILD_TESTING.
+if(TARGET Catch2::Catch2WithMain)
+   add_executable(rpiidp_test idp_luks_test.cpp)
+   target_link_libraries(rpiidp_test PRIVATE rpiidp ${JSONCPP_LIBRARIES} Catch2::Catch2WithMain)
+   target_include_directories(rpiidp_test PRIVATE ${JSONCPP_INCLUDE_DIR})
+   set_property(TARGET rpiidp_test PROPERTY CXX_STANDARD 17)
+   set_property(TARGET rpiidp_test PROPERTY CXX_STANDARD_REQUIRED ON)
+   add_test(NAME rpiidp_all_tests COMMAND rpiidp_test)
+   list(APPEND rpiidp_test_targets rpiidp_test)
+endif()
+
 # When built with IDP_FASTBOOT, rpiidp pulls in rpifwcrypto (via device.cpp)
 # and the native libcryptsetup wrapper (via crypt.cpp).  Both test executables
 # link the full rpiidp static library, so both need these dependencies
@@ -27,7 +41,7 @@ target_include_directories(rpiidp_dtest PRIVATE ${JSONCPP_INCLUDE_DIR})
 if(IDP_FASTBOOT)
    find_package(OpenSSL REQUIRED)
 
-   foreach(tgt rpiidp_ptest rpiidp_dtest)
+   foreach(tgt ${rpiidp_test_targets})
       target_sources(${tgt} PRIVATE
          ${CMAKE_SOURCE_DIR}/fastboot/device/crypto_native.cpp)
 
